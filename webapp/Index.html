@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1e3329">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="재고">
+  <title>중계고기파티 재고</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f3f0ea; color: #1c1c1c; font-family: "Malgun Gothic", sans-serif; }
+    header { background: #1e3329; color: #f7f4ee; padding: 16px 16px 14px; position: sticky; top: 0; z-index: 2; }
+    header h1 { margin: 0; font-size: 18px; }
+    header p { margin: 4px 0 0; color: #d5ddd6; font-size: 13px; }
+    main { padding: 12px 12px 84px; }
+    button, input, select { font-family: inherit; font-size: 16px; }
+    .pin { max-width: 420px; margin: 28px auto; background: #fffdf9; border: 1px solid #e7e2d8; border-radius: 16px; padding: 18px; }
+    .pin h2 { margin: 0 0 8px; font-size: 20px; }
+    .note { color: #5e584f; font-size: 13px; line-height: 1.45; }
+    input[type="password"], input[type="text"], input[type="number"], select {
+      width: 100%; padding: 12px; border: 1px solid #ddd6cb; border-radius: 10px; background: #fff;
+    }
+    .go, .save {
+      width: 100%; margin-top: 10px; padding: 14px; border: 0; border-radius: 12px;
+      background: #1e3329; color: #f7f4ee; font-weight: 700;
+    }
+    .tools { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+    .tools label { display: flex; gap: 6px; align-items: center; font-size: 14px; white-space: nowrap; }
+    .chips { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 8px; }
+    .chips button, .linkish {
+      flex: 0 0 auto; border: 1px solid #ddd6cb; background: #fff; color: #1e3329;
+      border-radius: 999px; padding: 7px 12px;
+    }
+    .chips button.on { background: #1e3329; color: #f7f4ee; border-color: #1e3329; }
+    .card { background: #fffdf9; border: 1px solid #e7e2d8; border-radius: 14px; padding: 12px; margin: 0 0 10px; }
+    .card.low { background: #f8ece8; border-color: #e4c7c0; }
+    .top { display: flex; justify-content: space-between; gap: 10px; }
+    .name { font-size: 17px; font-weight: 700; }
+    .muted { color: #6d675e; font-size: 12px; }
+    .now { text-align: right; font-weight: 700; }
+    .now b { display: block; font-size: 18px; }
+    .low .now { color: #8a3324; }
+    .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    .fields span { display: block; color: #5e584f; font-size: 12px; margin-bottom: 4px; }
+    .rowcheck { display: flex; gap: 12px; align-items: flex-start; background: #fff; border-bottom: 1px solid #eee6dc; padding: 12px; }
+    .rowcheck input { width: 22px; height: 22px; margin: 2px 0 0; }
+    .nocode { background: #fff6d8; }
+    .tabs { position: fixed; left: 0; right: 0; bottom: 0; display: flex; background: #1e3329; padding-bottom: env(safe-area-inset-bottom); }
+    .tabs button { flex: 1; background: transparent; color: #d5ddd6; border: 0; padding: 14px 8px; }
+    .tabs button.on { color: #fff; font-weight: 700; }
+    .error { color: #8a3324; font-size: 14px; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>중계고기파티 재고</h1>
+    <p id="sub">핸드폰에서 재고와 검수를 엽니다.</p>
+  </header>
+  <main id="app"></main>
+  <nav class="tabs hidden" id="tabs">
+    <button type="button" id="tabStock" class="on">재고</button>
+    <button type="button" id="tabInspect">검수</button>
+  </nav>
+  <script>
+    var pin = sessionStorage.getItem("stockPin") || "";
+    var page = "stock";
+    var stock = null;
+    var inspection = null;
+    var category = "전체";
+    var lowOnly = false;
+    var query = "";
+    var pendingOnly = true;
+
+    var tabStock = document.getElementById("tabStock");
+    var tabInspect = document.getElementById("tabInspect");
+    tabStock.onclick = function() { page = "stock"; showPage(); };
+    tabInspect.onclick = function() { page = "inspect"; showPage(); };
+
+    function run(name, args, ok) {
+      var call = google.script.run.withSuccessHandler(ok).withFailureHandler(function(err) {
+        toast(err && err.message ? err.message : "처리하지 못했습니다.");
+      });
+      call[name].apply(call, args);
+    }
+
+    function toast(message) {
+      document.getElementById("sub").textContent = message;
+    }
+
+    function qty(value) {
+      if (value === null || value === undefined || value === "") return "";
+      var number = Number(value);
+      if (isNaN(number)) return "";
+      if (Math.abs(number - Math.round(number)) < 1e-9) return Math.round(number).toLocaleString("ko-KR");
+      return number.toLocaleString("ko-KR", { maximumFractionDigits: 4 });
+    }
+
+    function below(item) {
+      return item.safety !== null && item.safety !== "" && Number(item.stock) <= Number(item.safety);
+    }
+
+    function shortage(item) {
+      if (!below(item)) return null;
+      return Math.round((Number(item.safety) - Number(item.stock)) * 10000) / 10000;
+    }
+
+    function showPage() {
+      tabStock.className = page === "stock" ? "on" : "";
+      tabInspect.className = page === "inspect" ? "on" : "";
+      if (!pin) { drawPin(); return; }
+      document.getElementById("tabs").className = "tabs";
+      if (page === "stock") loadStock();
+      else loadInspection();
+    }
+
+    function drawPin() {
+      document.getElementById("tabs").className = "tabs hidden";
+      document.getElementById("app").innerHTML =
+        '<form class="pin" id="pinForm"><h2>재고 열기</h2>' +
+        '<p class="note">직원용 비밀번호를 입력하세요. 이 주소는 홈 화면에 추가하면 앱처럼 열립니다.</p>' +
+        '<input id="pinInput" type="password" inputmode="numeric" autocomplete="current-password">' +
+        '<button class="go" type="submit">들어가기</button></form>';
+      document.getElementById("pinForm").onsubmit = function(event) {
+        event.preventDefault();
+        pin = document.getElementById("pinInput").value.trim();
+        run("stockList", [pin], function(data) {
+          sessionStorage.setItem("stockPin", pin);
+          stock = data;
+          page = "stock";
+          drawStock();
+        });
+      };
+    }
+
+    function loadStock() {
+      document.getElementById("app").innerHTML = '<p class="note">재고를 불러오는 중...</p>';
+      run("stockList", [pin], function(data) {
+        stock = data;
+        drawStock();
+      });
+    }
+
+    function loadInspection() {
+      document.getElementById("app").innerHTML = '<p class="note">검수 목록을 불러오는 중...</p>';
+      run("inspectionList", [pin], function(data) {
+        inspection = data;
+        drawInspection();
+      });
+    }
+
+    function categories() {
+      var present = {};
+      stock.rows.forEach(function(item) { present[item.category || ""] = true; });
+      var names = ["전체"];
+      ["고기","주류","하이볼","식사","사이드","음료","야채","공산품","기타"].forEach(function(name) {
+        if (present[name]) names.push(name);
+      });
+      Object.keys(present).sort().forEach(function(name) {
+        if (name && names.indexOf(name) < 0) names.push(name);
+      });
+      if (present[""]) names.push("미분류");
+      return names;
+    }
+
+    function visibleStock() {
+      var keyword = query.trim();
+      return stock.rows.filter(function(item) {
+        var itemCategory = item.category || "";
+        if (category === "미분류" && itemCategory) return false;
+        if (category !== "전체" && category !== "미분류" && itemCategory !== category) return false;
+        if (keyword && (item.name + " " + item.code + " " + itemCategory).indexOf(keyword) < 0) return false;
+        if (lowOnly && !below(item)) return false;
+        return true;
+      });
+    }
+
+    function drawStock() {
+      document.getElementById("tabs").className = "tabs";
+      var low = stock.rows.filter(below).length;
+      document.getElementById("sub").textContent = stock.month + " · 안전재고 이하 " + low + "개 · 전체 " + stock.rows.length + "개";
+      var chips = categories().map(function(name) {
+        return '<button type="button" data-cat="' + escapeHtml(name) + '" class="' + (name === category ? "on" : "") + '">' + escapeHtml(name) + '</button>';
+      }).join("");
+      var cards = visibleStock().map(cardHtml).join("");
+      if (!cards) cards = '<p class="note">이 조건에 재고가 없습니다.</p>';
+      document.getElementById("app").innerHTML =
+        '<div class="chips" id="chips">' + chips + '</div>' +
+        '<div class="tools"><input id="q" type="text" placeholder="품목 또는 코드" value="' + escapeHtml(query) + '">' +
+        '<label><input id="low" type="checkbox"' + (lowOnly ? " checked" : "") + '>이하만</label></div>' +
+        '<div id="cards">' + cards + '</div>' +
+        '<p class="note">안전재고와 조정을 고치면 시트에 바로 저장됩니다. 로스나 폐기는 마이너스로 입력하세요. 판매 수집과 영수증 인식은 노트북에서 합니다.</p>';
+      document.getElementById("chips").onclick = function(event) {
+        var button = event.target.closest("button");
+        if (!button) return;
+        category = button.getAttribute("data-cat");
+        drawStock();
+      };
+      document.getElementById("q").oninput = function() { query = this.value; drawCards(); };
+      document.getElementById("low").onchange = function() { lowOnly = this.checked; drawCards(); };
+      bindCards();
+    }
+
+    function drawCards() {
+      var cards = visibleStock().map(cardHtml).join("");
+      document.getElementById("cards").innerHTML = cards || '<p class="note">이 조건에 재고가 없습니다.</p>';
+      var low = stock.rows.filter(below).length;
+      var shown = visibleStock().length;
+      var extra = shown === stock.rows.length ? "" : " · 표시 " + shown + "개";
+      document.getElementById("sub").textContent = stock.month + " · 안전재고 이하 " + low + "개 · 전체 " + stock.rows.length + "개" + extra;
+      bindCards();
+    }
+
+    function cardHtml(item) {
+      var gap = shortage(item);
+      var current = item.display || (qty(item.stock) + (item.unit || ""));
+      return '<article class="card' + (below(item) ? " low" : "") + '" data-row="' + item.row + '">' +
+        '<div class="top"><div><div class="muted">' + escapeHtml(item.category || "미분류") + " · " + escapeHtml(item.code) + '</div>' +
+        '<div class="name">' + escapeHtml(item.name) + '</div></div>' +
+        '<div class="now"><b>' + escapeHtml(current) + '</b><span class="muted">잔여 ' + qty(item.stock) +
+        (gap === null ? "" : " · 부족 " + qty(gap)) + '</span></div></div>' +
+        '<div class="fields"><label><span>안전재고</span><input data-kind="safety" inputmode="decimal" value="' + qty(item.safety) + '"></label>' +
+        '<label><span>조정(로스)</span><input data-kind="adjustment" inputmode="decimal" value="' + qty(item.adjustment) + '"></label></div></article>';
+    }
+
+    function bindCards() {
+      document.querySelectorAll(".card input").forEach(function(input) {
+        input.onchange = function() { saveField(input); };
+      });
+    }
+
+    function saveField(input) {
+      var card = input.closest(".card");
+      var rowNumber = Number(card.getAttribute("data-row"));
+      var item = stock.rows.filter(function(row) { return row.row === rowNumber; })[0];
+      if (!item) return;
+      var kind = input.getAttribute("data-kind");
+      input.disabled = true;
+      google.script.run
+        .withSuccessHandler(function(saved) {
+          item.adjustment = saved.adjustment;
+          item.stock = saved.stock;
+          item.safety = saved.safety;
+          item.display = saved.display;
+          drawCards();
+        })
+        .withFailureHandler(function(err) {
+          input.disabled = false;
+          toast(err && err.message ? err.message : "저장하지 못했습니다.");
+        })
+        .saveStock(pin, rowNumber, item.code, kind, input.value);
+    }
+
+    function drawInspection() {
+      var waiting = inspection.rows.filter(function(row) { return !row.checked; }).length;
+      var visible = inspection.rows.filter(function(row) { return pendingOnly ? !row.checked : true; });
+      if (pendingOnly && !visible.length && inspection.rows.length) {
+        pendingOnly = false;
+        visible = inspection.rows;
+      }
+      document.getElementById("sub").textContent = inspection.month + " · 검수 대기 " + waiting + "건";
+      var rows = visible.map(function(row) {
+        return '<label class="rowcheck' + (row.code ? "" : " nocode") + '">' +
+          '<input type="checkbox" data-row="' + row.row + '"' + (row.checked ? " checked" : "") + '>' +
+          '<span><b>' + escapeHtml(row.name || "이름 없음") + '</b><br><span class="muted">' +
+          escapeHtml(row.date) + " " + escapeHtml(row.vendor) + " · " + escapeHtml(row.spec) +
+          " · 수량 " + escapeHtml(row.qty) + " · " + escapeHtml(row.code || "코드 없음") +
+          " · 반영 " + escapeHtml(row.final) + '</span></span></label>';
+      }).join("");
+      document.getElementById("app").innerHTML =
+        '<div class="tools"><button type="button" class="linkish" id="toggle">' +
+        (pendingOnly ? "전체 " + inspection.rows.length + "건" : "대기 " + waiting + "건만") +
+        '</button></div>' +
+        (rows || '<p class="note">검수할 입고가 없습니다.</p>') +
+        '<button class="save" id="saveInspect" type="button">시트에 반영</button>' +
+        '<p class="note">체크는 검수 표시만 바꿉니다. 재고 수량은 노트북에서 실시간 재고 계산을 누를 때 반영됩니다.</p>';
+      document.getElementById("toggle").onclick = function() {
+        pendingOnly = !pendingOnly;
+        drawInspection();
+      };
+      document.getElementById("saveInspect").onclick = function() {
+        var changes = [];
+        document.querySelectorAll(".rowcheck input").forEach(function(box) {
+          changes.push({ row: Number(box.getAttribute("data-row")), checked: box.checked });
+        });
+        var button = this;
+        button.disabled = true;
+        google.script.run
+          .withSuccessHandler(function(message) {
+            toast(message);
+            loadInspection();
+          })
+          .withFailureHandler(function(err) {
+            button.disabled = false;
+            toast(err && err.message ? err.message : "저장하지 못했습니다.");
+          })
+          .saveInspection(pin, changes);
+      };
+    }
+
+    function escapeHtml(value) {
+      return String(value === null || value === undefined ? "" : value)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    if (typeof google === "undefined" || !google.script || !google.script.run) {
+      document.getElementById("app").innerHTML = "<p class='note'>이 화면은 구글에 웹앱으로 배포한 주소에서 열립니다.</p>";
+    } else {
+      showPage();
+    }
+  </script>
+</body>
+</html>

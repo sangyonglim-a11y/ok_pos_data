@@ -1,0 +1,14 @@
+{
+  "okpos_id": "매장OKPOS아이디",
+  "okpos_password": "매장OKPOS비밀번호",
+  "sheet_url": "https://docs.google.com/spreadsheets/d/시트ID/edit",
+  "service_account_file": "okpos-inventory.json",
+  "gemini_api_key": "Gemini키(선택, OCR용)",
+  "business_hours": {
+    "start": "10:00",
+    "end": "23:00",
+    "days": [0, 1, 2, 3, 4, 5, 6]
+  },
+  "interval_minutes": 30,
+  "period": "today"
+}

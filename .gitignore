@@ -1,0 +1,48 @@
+# secrets — never commit
+.env
+.env.local
+.env.*.local
+!**/.env.example
+!.env.example
+*.pem
+okpos-inventory-*.json
+**/config.json
+agent/config.json
+credentials/
+secrets/
+요청_문의.txt
+ocr입고등록.gs.txt
+pos재고관리수행.gs.txt
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# build / installer
+build/
+dist/
+installer/output/
+*.exe
+*.log
+
+# local data
+pos_excel_data/
+명세서/
+*.xls
+*.xlsx
+!레시피배합표_최종본_국밥완성.xlsx
+
+# node / next
+web/node_modules/
+web/.next/
+web/out/
+web/.vercel/
+
+# os / ide
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

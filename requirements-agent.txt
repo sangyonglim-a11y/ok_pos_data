@@ -1,0 +1,9 @@
+selenium
+webdriver-manager
+gspread
+google-auth
+google-api-python-client
+pandas
+xlrd
+openpyxl
+pyinstaller
