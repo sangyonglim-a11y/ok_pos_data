@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { assertPin } from "@/lib/auth";
-import { saveLiveStockCell } from "@/lib/sheets";
+import { publicSheetsError, saveLiveStockCell } from "@/lib/sheets";
 
 export const runtime = "nodejs";
 
@@ -12,7 +12,8 @@ export async function POST(req: NextRequest) {
     const saved = await saveLiveStockCell(Number(body.row), kind, String(body.value ?? ""));
     return NextResponse.json(saved);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "저장하지 못했습니다.";
+    const raw = err instanceof Error ? err.message : "";
+    const message = raw.includes("비밀번호") ? raw : publicSheetsError(err);
     const status = message.includes("비밀번호") ? 401 : 500;
     return NextResponse.json({ error: message }, { status });
   }

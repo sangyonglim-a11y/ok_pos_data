@@ -40,6 +40,8 @@ web/node_modules/
 web/.next/
 web/out/
 web/.vercel/
+web/vercel-env-*.b64.txt
+web/.env.local
 
 # os / ide
 .DS_Store

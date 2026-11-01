@@ -3,21 +3,94 @@ import { google } from "googleapis";
 const STOCK_SHEET = "원재료_실시간재고";
 const RECEIPT_SHEET = "원재료입고";
 
+function a1(sheet: string, range: string) {
+  // 한글 시트명은 작은따옴표로 감싼다
+  return `'${sheet.replace(/'/g, "''")}'!${range}`;
+}
+
 function credentials() {
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "";
+  let raw = (process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "").trim();
   if (!raw) {
     throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON 환경변수가 없습니다.");
   }
-  const text = raw.trim().startsWith("{")
-    ? raw
-    : Buffer.from(raw, "base64").toString("utf8");
-  return JSON.parse(text);
+  // Vercel에 따옴표로 감싸 넣은 경우
+  if (
+    (raw.startsWith("'") && raw.endsWith("'")) ||
+    (raw.startsWith('"') && raw.endsWith('"'))
+  ) {
+    raw = raw.slice(1, -1);
+  }
+
+  let text = raw;
+  if (!raw.startsWith("{")) {
+    text = Buffer.from(raw, "base64").toString("utf8").trim();
+  }
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(
+      "GOOGLE_SERVICE_ACCOUNT_JSON 형식이 잘못되었습니다. JSON 전체 또는 Base64 한 줄을 넣어 주세요.",
+    );
+  }
+
+  if (typeof parsed.private_key === "string") {
+    // 환경변수에서 \\n 으로 들어온 키를 실제 줄바꿈으로
+    parsed.private_key = parsed.private_key.replace(/\\n/g, "\n");
+  }
+  if (!parsed.client_email || !parsed.private_key) {
+    throw new Error("서비스계정 JSON에 client_email / private_key 가 없습니다.");
+  }
+  return parsed;
 }
 
 export function sheetId() {
-  const id = process.env.SHEET_ID || "";
+  let id = (process.env.SHEET_ID || "").trim();
   if (!id) throw new Error("SHEET_ID 환경변수가 없습니다.");
+  if (
+    (id.startsWith("'") && id.endsWith("'")) ||
+    (id.startsWith('"') && id.endsWith('"'))
+  ) {
+    id = id.slice(1, -1).trim();
+  }
+  // URL 전체를 넣은 경우 ID만 추출
+  const fromUrl = id.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (fromUrl) return fromUrl[1];
   return id;
+}
+
+export function publicSheetsError(err: unknown) {
+  const anyErr = err as {
+    message?: string;
+    code?: number | string;
+    errors?: { message?: string }[];
+    response?: { status?: number; data?: { error?: { message?: string } } };
+  };
+  const status = Number(anyErr?.code || anyErr?.response?.status || 0);
+  const detail =
+    anyErr?.errors?.[0]?.message ||
+    anyErr?.response?.data?.error?.message ||
+    anyErr?.message ||
+    "";
+
+  if (status === 404 || /Requested entity was not found/i.test(detail)) {
+    return (
+      "구글 시트를 찾지 못했습니다. Vercel의 SHEET_ID 가 맞는지, " +
+      "시트에 pos-bot@okpos-inventory.iam.gserviceaccount.com 편집자를 공유했는지 확인하세요."
+    );
+  }
+  if (status === 403 || /permission|forbidden|The caller does not have permission/i.test(detail)) {
+    return (
+      "구글 시트 권한이 없습니다. 시트를 열고 공유에 " +
+      "pos-bot@okpos-inventory.iam.gserviceaccount.com 을 편집자로 추가하세요."
+    );
+  }
+  if (/JSON|GOOGLE_SERVICE_ACCOUNT|SHEET_ID|client_email|private_key/i.test(detail)) {
+    return detail;
+  }
+  if (detail && detail.length < 280) return detail;
+  return "시트를 열지 못했습니다. Vercel 환경변수와 시트 공유를 확인해 주세요.";
 }
 
 export async function sheetsClient() {
@@ -56,7 +129,7 @@ export async function loadLiveStock() {
   const sheets = await sheetsClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId(),
-    range: `${STOCK_SHEET}!A:N`,
+    range: a1(STOCK_SHEET, "A:N"),
   });
   const values = res.data.values || [];
   const month = values.length > 1 ? latestMonth(values) : new Date().toISOString().slice(0, 7);
@@ -99,13 +172,13 @@ export async function saveLiveStockCell(
   const sheets = await sheetsClient();
   await sheets.spreadsheets.values.update({
     spreadsheetId: sheetId(),
-    range: `${STOCK_SHEET}!${column}${rowNumber}`,
+    range: a1(STOCK_SHEET, `${column}${rowNumber}`),
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [[value]] },
   });
   const shown = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId(),
-    range: `${STOCK_SHEET}!I${rowNumber}:K${rowNumber}`,
+    range: a1(STOCK_SHEET, `I${rowNumber}:K${rowNumber}`),
   });
   const flat = shown.data.values?.[0] || [];
   return {
@@ -120,7 +193,7 @@ export async function loadInspection() {
   const sheets = await sheetsClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId(),
-    range: `${RECEIPT_SHEET}!A:N`,
+    range: a1(RECEIPT_SHEET, "A:N"),
   });
   const values = res.data.values || [];
   const month = new Date().toISOString().slice(0, 7);
@@ -129,7 +202,6 @@ export async function loadInspection() {
     const row = values[i] || [];
     const date = cell(row, 2);
     if (monthOf(date) && monthOf(date) !== month && !date.startsWith(month)) {
-      // 거래일자가 이번 달이 아니면 스킵. 시스템시각(A) 보조
       const stamp = cell(row, 0);
       if (!stamp.startsWith(month) && !date.startsWith(month)) continue;
     }
@@ -152,7 +224,7 @@ export async function saveInspection(changes: { row: number; checked: boolean }[
   if (!changes.length) return "변경 없음";
   const sheets = await sheetsClient();
   const data = changes.map((c) => ({
-    range: `${RECEIPT_SHEET}!M${c.row}`,
+    range: a1(RECEIPT_SHEET, `M${c.row}`),
     values: [[c.checked]],
   }));
   await sheets.spreadsheets.values.batchUpdate({
