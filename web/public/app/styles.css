@@ -37,16 +37,28 @@ body {
 .badge-ok { background: #e7f6ee; color: #1f7a4c; }
 .badge-wait { background: #fff1e0; color: #c46a1b; }
 
-.check-orb {
-  width: 52px;
-  height: 52px;
-  border-radius: 999px;
-  display: grid;
-  place-items: center;
-  transition: transform .15s ease, background .15s ease, box-shadow .15s ease;
-  box-shadow: 0 8px 18px rgba(22,48,40,.12);
+/* 모바일: 한 화면에 많이 보이도록 촘촘한 행 */
+.dense-list {
+  background: #fff;
+  border-top: 1px solid #e4ddd2;
 }
-.check-orb:active { transform: scale(.94); }
+.dense-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #eee7dc;
+  min-height: 56px;
+  background: #fff;
+}
+.dense-row.is-dirty { background: #fff8e8; }
+.dense-row.is-checked { background: #f4faf6; }
+.dense-check {
+  width: 22px;
+  height: 22px;
+  accent-color: #1f7a4c;
+  flex: 0 0 auto;
+}
 
 .receipt-frame {
   background:

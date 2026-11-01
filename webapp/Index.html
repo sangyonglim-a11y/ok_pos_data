@@ -61,16 +61,28 @@ body {
 .badge-ok { background: #e7f6ee; color: #1f7a4c; }
 .badge-wait { background: #fff1e0; color: #c46a1b; }
 
-.check-orb {
-  width: 52px;
-  height: 52px;
-  border-radius: 999px;
-  display: grid;
-  place-items: center;
-  transition: transform .15s ease, background .15s ease, box-shadow .15s ease;
-  box-shadow: 0 8px 18px rgba(22,48,40,.12);
+/* 모바일: 한 화면에 많이 보이도록 촘촘한 행 */
+.dense-list {
+  background: #fff;
+  border-top: 1px solid #e4ddd2;
 }
-.check-orb:active { transform: scale(.94); }
+.dense-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #eee7dc;
+  min-height: 56px;
+  background: #fff;
+}
+.dense-row.is-dirty { background: #fff8e8; }
+.dense-row.is-checked { background: #f4faf6; }
+.dense-check {
+  width: 22px;
+  height: 22px;
+  accent-color: #1f7a4c;
+  flex: 0 0 auto;
+}
 
 .receipt-frame {
   background:
@@ -98,7 +110,6 @@ body {
   <script>
 /* =========================================================
    중계고기파티 재고 SPA
-   - API URL 만 바꾸면 Apps Script / 로컬 목업 전환
    ========================================================= */
 
 const API_URL = "https://script.google.com/macros/s/AKfycbz69R3uqp6NTTEwNxIQ5RVFtrJU8aim6p8KxJtS1UbxKN5WWx4MrMv8D5R_F1My48z6kg/exec";
@@ -115,13 +126,18 @@ const state = {
   pin: sessionStorage.getItem("stockPin") || "",
   menu: "inspect",
   query: "",
+  filterDate: "전체",
+  filterVendor: "전체",
+  pendingOnly: true,
   month: "",
   rows: [],
+  draft: {}, // rowNumber -> boolean (화면 체크 상태)
   selectedId: null,
   loading: false,
+  applying: false,
   error: "",
   toast: "",
-  pendingOnly: true,
+  warnCount: 0,
 };
 
 const root = document.getElementById("root");
@@ -132,6 +148,20 @@ function esc(value) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function formatDate(value) {
+  const text = String(value ?? "").trim();
+  const iso = text.match(/(\d{4})[-/.](\d{2})[-/.](\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const eng = text.match(/(\w{3})\s+(\w{3})\s+(\d{1,2})\s+(\d{4})/);
+  if (eng) {
+    const months = { Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06", Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12" };
+    const mm = months[eng[2]] || "01";
+    const dd = String(eng[3]).padStart(2, "0");
+    return `${eng[4]}-${mm}-${dd}`;
+  }
+  return text;
 }
 
 function toast(message) {
@@ -149,11 +179,9 @@ async function api(action, payload = {}) {
     if (!USE_MOCK_WHEN_EMPTY) throw new Error("API_URL 을 설정해 주세요.");
     return mockApi(action, payload);
   }
-
   const body = { action, pin: state.pin, ...payload };
   const res = await fetch(API_URL, {
     method: "POST",
-    // Apps Script CORS 단순화: text/plain 으로 preflight 회피
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify(body),
     redirect: "follow",
@@ -166,65 +194,76 @@ async function api(action, payload = {}) {
 function mockApi(action, payload) {
   if (!mockApi._rows) {
     mockApi._rows = [
-      { row: 12, date: "2026-10-28", vendor: "(주)회승", name: "이베리코 목살", spec: "1 Box / 11.96kg", qty: "1", code: "M0015", final: "11.96", checked: false, biz: "123-45-67890", amount: "233220", imageUrl: "" },
-      { row: 13, date: "2026-10-28", vendor: "(주)회승", name: "삼겹살", spec: "1 Box / 9.40kg", qty: "1", code: "M0012", final: "9.40", checked: false, biz: "123-45-67890", amount: "168000", imageUrl: "" },
-      { row: 18, date: "2026-10-29", vendor: "신선농산", name: "양파", spec: "망 / 20kg", qty: "2", code: "V003", final: "40", checked: true, biz: "211-88-12345", amount: "48000", imageUrl: "" },
-      { row: 21, date: "2026-10-30", vendor: "백두주류", name: "하이볼 베이스", spec: "1.5L × 6", qty: "3", code: "D010", final: "18", checked: false, biz: "101-81-99999", amount: "96000", imageUrl: "" },
-      { row: 25, date: "2026-10-31", vendor: "대한공산", name: "위생장갑", spec: "100매", qty: "10", code: "G002", final: "10", checked: false, biz: "312-86-55555", amount: "35000", imageUrl: "" },
+      { row: 12, date: "2026-10-28", vendor: "(주)회승", name: "이베리코 목살", spec: "1 Box / 11.96kg", qty: "1", code: "M0015", final: "11.96", checked: false },
+      { row: 13, date: "2026-10-28", vendor: "(주)회승", name: "삼겹살", spec: "1 Box / 9.40kg", qty: "1", code: "M0012", final: "9.40", checked: false },
+      { row: 18, date: "2026-10-29", vendor: "신선농산", name: "양파", spec: "망 / 20kg", qty: "2", code: "V003", final: "40", checked: true },
+      { row: 21, date: "2026-10-30", vendor: "백두주류", name: "하이볼 베이스", spec: "1.5L × 6", qty: "3", code: "D010", final: "18", checked: false },
+      { row: 25, date: "2026-10-31", vendor: "대한공산", name: "위생장갑", spec: "100매", qty: "10", code: "G002", final: "10", checked: false },
     ];
-    // 배지용 더미 20건처럼 보이게 복제
-    while (mockApi._rows.length < 20) {
-      const base = mockApi._rows[mockApi._rows.length % 5];
-      mockApi._rows.push({
-        ...base,
-        row: 100 + mockApi._rows.length,
-        name: base.name + " #" + (mockApi._rows.length + 1),
-        checked: mockApi._rows.length % 4 === 0,
-      });
-    }
   }
-
-  if (action === "login" || action === "inspectionList") {
-    if (payload.pin && payload.pin !== "9338892" && state.pin !== "9338892" && payload.pin !== state.pin) {
-      // pin checked at login UI against whatever user set; mock accepts any non-empty after session
-    }
-    return Promise.resolve({
-      month: "2026-10",
-      warnCount: 3,
-      rows: JSON.parse(JSON.stringify(mockApi._rows)),
+  if (action === "inspectionList" || action === "login") {
+    return Promise.resolve({ month: "2026-10", warnCount: 3, rows: JSON.parse(JSON.stringify(mockApi._rows)) });
+  }
+  if (action === "applyInspection") {
+    (payload.changes || []).forEach((c) => {
+      const row = mockApi._rows.find((r) => r.row === Number(c.row));
+      if (row) row.checked = !!c.checked;
     });
-  }
-  if (action === "setInspection") {
-    const row = mockApi._rows.find((r) => r.row === Number(payload.row));
-    if (row) row.checked = !!payload.checked;
-    return Promise.resolve({ ok: true, row: Number(payload.row), checked: !!payload.checked });
-  }
-  if (action === "setInspectionBulk") {
-    const ids = new Set((payload.rows || []).map(Number));
-    mockApi._rows.forEach((r) => {
-      if (ids.has(r.row)) r.checked = true;
-    });
-    return Promise.resolve({ ok: true, count: ids.size });
+    return Promise.resolve({ ok: true, count: (payload.changes || []).length, message: "반영했습니다." });
   }
   return Promise.reject(new Error("알 수 없는 요청입니다."));
 }
 
+function draftChecked(row) {
+  const key = String(row.row);
+  return Object.prototype.hasOwnProperty.call(state.draft, key) ? state.draft[key] : !!row.checked;
+}
+
+function dirtyChanges() {
+  return state.rows
+    .filter((r) => draftChecked(r) !== !!r.checked)
+    .map((r) => ({ row: r.row, checked: draftChecked(r) }));
+}
+
 function waitingCount() {
-  return state.rows.filter((r) => !r.checked).length;
+  return state.rows.filter((r) => !draftChecked(r)).length;
+}
+
+function dateOptions() {
+  const set = new Set(state.rows.map((r) => formatDate(r.date)).filter(Boolean));
+  return ["전체", ...Array.from(set).sort()];
+}
+
+function vendorOptions() {
+  let rows = state.rows;
+  if (state.filterDate !== "전체") {
+    rows = rows.filter((r) => formatDate(r.date) === state.filterDate);
+  }
+  const set = new Set(rows.map((r) => r.vendor).filter(Boolean));
+  return ["전체", ...Array.from(set).sort((a, b) => a.localeCompare(b, "ko"))];
 }
 
 function visibleRows() {
-  const q = state.query.trim();
+  const q = state.query.trim().toLowerCase();
   return state.rows.filter((r) => {
-    if (state.pendingOnly && r.checked) return false;
+    const date = formatDate(r.date);
+    if (state.filterDate !== "전체" && date !== state.filterDate) return false;
+    if (state.filterVendor !== "전체" && r.vendor !== state.filterVendor) return false;
+    if (state.pendingOnly && draftChecked(r)) return false;
     if (!q) return true;
-    const hay = `${r.date} ${r.vendor} ${r.name} ${r.spec} ${r.code}`.toLowerCase();
-    return hay.includes(q.toLowerCase());
+    return `${date} ${r.vendor} ${r.name} ${r.spec} ${r.code}`.toLowerCase().includes(q);
   });
 }
 
 function selectedRow() {
   return state.rows.find((r) => r.row === state.selectedId) || null;
+}
+
+function resetDraftFromRows() {
+  state.draft = {};
+  state.rows.forEach((r) => {
+    state.draft[String(r.row)] = !!r.checked;
+  });
 }
 
 async function loadInspection() {
@@ -234,11 +273,12 @@ async function loadInspection() {
   try {
     const data = await api("inspectionList", {});
     state.month = data.month || "";
-    state.rows = data.rows || [];
+    state.rows = (data.rows || []).map((r) => ({ ...r, date: formatDate(r.date) }));
     state.warnCount = data.warnCount || 0;
-    if (!state.selectedId && state.rows.length) {
+    resetDraftFromRows();
+    if (!state.rows.some((r) => r.row === state.selectedId)) {
       const first = state.rows.find((r) => !r.checked) || state.rows[0];
-      state.selectedId = first.row;
+      state.selectedId = first ? first.row : null;
     }
   } catch (err) {
     state.error = err.message || "불러오지 못했습니다.";
@@ -248,37 +288,32 @@ async function loadInspection() {
   }
 }
 
-async function toggleCheck(rowNumber, checked) {
-  const target = state.rows.find((r) => r.row === rowNumber);
-  if (!target) return;
-  const prev = target.checked;
-  target.checked = checked; // 낙관적 업데이트
+function setDraft(rowNumber, checked) {
+  state.draft[String(rowNumber)] = checked;
   render();
-  try {
-    await api("setInspection", { row: rowNumber, checked });
-    toast(checked ? "검수완료로 반영했습니다." : "검수대기로 되돌렸습니다.");
-  } catch (err) {
-    target.checked = prev;
-    render();
-    toast(err.message || "저장에 실패했습니다.");
-  }
 }
 
-async function bulkComplete() {
-  const targets = visibleRows().filter((r) => !r.checked);
-  if (!targets.length) {
-    toast("검수할 항목이 없습니다.");
+async function applyDraft() {
+  const changes = dirtyChanges();
+  if (!changes.length) {
+    toast("변경된 체크가 없습니다.");
     return;
   }
-  const ids = targets.map((r) => r.row);
-  targets.forEach((r) => { r.checked = true; });
+  state.applying = true;
   render();
   try {
-    await api("setInspectionBulk", { rows: ids });
-    toast(`일괄 검수완료 ${ids.length}건`);
+    const result = await api("applyInspection", { changes });
+    changes.forEach((c) => {
+      const row = state.rows.find((r) => r.row === c.row);
+      if (row) row.checked = c.checked;
+    });
+    resetDraftFromRows();
+    toast(result.message || `${changes.length}건 적용했습니다.`);
   } catch (err) {
-    await loadInspection();
-    toast(err.message || "일괄 저장에 실패했습니다.");
+    toast(err.message || "적용에 실패했습니다.");
+  } finally {
+    state.applying = false;
+    render();
   }
 }
 
@@ -293,11 +328,11 @@ function renderPin() {
             <p class="text-sm text-black/55">재고관리 · 직원 로그인</p>
           </div>
         </div>
-        <p class="text-sm text-black/60 mb-3">직원용 비밀번호를 입력하세요. 홈 화면에 추가하면 앱처럼 열립니다.</p>
+        <p class="text-sm text-black/60 mb-3">직원용 비밀번호를 입력하세요.</p>
         <input id="pinInput" type="password" inputmode="numeric" autocomplete="current-password"
           class="w-full tap rounded-xl border border-paper-line px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-brand/30" />
         ${state.error ? `<p class="text-red-700 text-sm mt-2">${esc(state.error)}</p>` : ""}
-        <button class="mt-4 w-full tap rounded-xl bg-brand text-white font-semibold hover:bg-brand-soft transition">들어가기</button>
+        <button class="mt-4 w-full tap rounded-xl bg-brand text-white font-semibold">들어가기</button>
       </form>
     </div>`;
   document.getElementById("pinForm").onsubmit = async (e) => {
@@ -344,19 +379,24 @@ function sidebarHtml() {
           </button>`;
         }).join("")}
       </nav>
-      <div class="p-4 text-xs text-white/50 border-t border-white/10">매장 PC 수집 · 시트 동기화</div>
     </aside>`;
 }
 
 function mobileHeaderHtml() {
+  const dirty = dirtyChanges().length;
   return `
-    <header class="mobile-only sticky top-0 z-20 bg-brand text-white px-4 py-3 flex items-center gap-3">
-      <div class="w-9 h-9 rounded-lg bg-white/10 grid place-items-center"><i class="fa-solid fa-store"></i></div>
-      <div class="min-w-0">
-        <div class="font-bold truncate">중계고기파티</div>
-        <div class="text-[11px] text-white/65 truncate">${esc(state.month)} 실물 검수</div>
+    <header class="mobile-only sticky top-0 z-20 bg-brand text-white px-3 py-2">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-lg bg-white/10 grid place-items-center text-sm"><i class="fa-solid fa-store"></i></div>
+        <div class="min-w-0 flex-1">
+          <div class="font-bold text-sm truncate">중계고기파티 · 검수</div>
+          <div class="text-[10px] text-white/65">${esc(state.month)} · 대기 ${waitingCount()}건${dirty ? ` · 변경 ${dirty}` : ""}</div>
+        </div>
+        <button id="mobileRefresh" class="tap rounded-lg px-2 hover:bg-white/10"><i class="fa-solid fa-rotate-right"></i></button>
+        <button id="mobileApply" class="tap rounded-lg bg-ok px-3 text-sm font-bold ${dirty ? "" : "opacity-50"}" ${dirty && !state.applying ? "" : "disabled"}>
+          ${state.applying ? "적용중" : "적용"}
+        </button>
       </div>
-      <button id="mobileRefresh" class="ml-auto tap rounded-lg px-3 hover:bg-white/10"><i class="fa-solid fa-rotate-right"></i></button>
     </header>`;
 }
 
@@ -373,58 +413,81 @@ function mobileTabsHtml() {
 }
 
 function toolbarHtml() {
+  const dirty = dirtyChanges().length;
+  const dates = dateOptions();
+  const vendors = vendorOptions();
   return `
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between mb-4">
-      <h2 class="text-xl font-bold tracking-tight">${esc(state.month || "—")} 실물 검수</h2>
-      <div class="flex flex-wrap items-center gap-2">
-        <div class="relative flex-1 min-w-[180px]">
-          <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-black/35 text-sm"></i>
-          <input id="searchInput" value="${esc(state.query)}" placeholder="거래처·품목·코드 검색"
-            class="w-full tap rounded-xl border border-paper-line bg-white pl-9 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/25" />
-        </div>
-        <button id="btnRefresh" class="tap rounded-xl border border-paper-line bg-white px-3 hover:bg-black/[.03]"><i class="fa-solid fa-rotate-right"></i></button>
-        <button id="btnPending" class="tap rounded-xl border border-paper-line bg-white px-3 text-sm hover:bg-black/[.03]">
-          ${state.pendingOnly ? "대기만" : "전체"}
+    <div class="mb-3 space-y-2">
+      <div class="desktop-only flex items-center justify-between gap-3">
+        <h2 class="text-xl font-bold tracking-tight">${esc(state.month || "—")} 실물 검수</h2>
+        <div class="text-sm text-black/50">변경 ${dirty}건 · 대기 ${waitingCount()}건</div>
+      </div>
+      <div class="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <label class="block">
+          <span class="sr-only">거래일자</span>
+          <select id="filterDate" class="w-full tap rounded-xl border border-paper-line bg-white px-3 text-sm">
+            ${dates.map((d) => `<option value="${esc(d)}" ${d === state.filterDate ? "selected" : ""}>${d === "전체" ? "날짜: 전체" : d}</option>`).join("")}
+          </select>
+        </label>
+        <label class="block">
+          <span class="sr-only">거래처</span>
+          <select id="filterVendor" class="w-full tap rounded-xl border border-paper-line bg-white px-3 text-sm">
+            ${vendors.map((v) => `<option value="${esc(v)}" ${v === state.filterVendor ? "selected" : ""}>${v === "전체" ? "거래처: 전체" : esc(v)}</option>`).join("")}
+          </select>
+        </label>
+        <button id="btnPending" class="tap rounded-xl border border-paper-line bg-white px-3 text-sm">
+          ${state.pendingOnly ? "대기만 보기" : "전체 보기"}
         </button>
-        <button id="btnBulk" class="tap rounded-xl bg-ok text-white px-4 text-sm font-semibold hover:brightness-110 shadow-sm">
-          일괄 검수완료
+        <button id="btnApply" class="desktop-only tap rounded-xl bg-ok text-white px-4 text-sm font-bold ${dirty ? "hover:brightness-110" : "opacity-50"}" ${dirty && !state.applying ? "" : "disabled"}>
+          ${state.applying ? "적용 중…" : `적용${dirty ? ` (${dirty})` : ""}`}
         </button>
       </div>
+      <div class="flex gap-2">
+        <div class="relative flex-1">
+          <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-black/35 text-xs"></i>
+          <input id="searchInput" value="${esc(state.query)}" placeholder="품목·코드 검색"
+            class="w-full tap rounded-xl border border-paper-line bg-white pl-8 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand/25" />
+        </div>
+        <button id="btnRefresh" class="tap rounded-xl border border-paper-line bg-white px-3"><i class="fa-solid fa-rotate-right"></i></button>
+      </div>
+      <p class="text-[11px] text-black/45">체크만 하고, 위 <b>적용</b>을 눌러야 시트에 반영됩니다.</p>
     </div>`;
 }
 
 function tableHtml(rows) {
-  if (state.loading) return `<div class="p-8 text-sm text-black/50">불러오는 중…</div>`;
-  if (!rows.length) return `<div class="p-8 text-sm text-black/50">표시할 입고가 없습니다.</div>`;
+  if (state.loading) return `<div class="p-6 text-sm text-black/50">불러오는 중…</div>`;
+  if (!rows.length) return `<div class="p-6 text-sm text-black/50">조건에 맞는 입고가 없습니다.</div>`;
   return `
     <div class="desktop-only overflow-auto scroll-thin rounded-2xl border border-paper-line bg-white shadow-panel">
       <table class="min-w-full text-sm">
         <thead class="bg-[#f3f6f3] text-black/55 sticky top-0">
           <tr class="text-left">
-            <th class="px-3 py-3 w-12"></th>
-            <th class="px-3 py-3 font-medium">거래일자</th>
-            <th class="px-3 py-3 font-medium">거래처</th>
-            <th class="px-3 py-3 font-medium">품목명</th>
-            <th class="px-3 py-3 font-medium">단위/규격</th>
-            <th class="px-3 py-3 font-medium text-right">수량</th>
-            <th class="px-3 py-3 font-medium">검수상태</th>
+            <th class="px-3 py-2.5 w-12">검수</th>
+            <th class="px-3 py-2.5 font-medium">거래일자</th>
+            <th class="px-3 py-2.5 font-medium">거래처</th>
+            <th class="px-3 py-2.5 font-medium">품목명</th>
+            <th class="px-3 py-2.5 font-medium">단위/규격</th>
+            <th class="px-3 py-2.5 font-medium text-right">수량</th>
+            <th class="px-3 py-2.5 font-medium">상태</th>
           </tr>
         </thead>
         <tbody>
           ${rows.map((r) => {
+            const checked = draftChecked(r);
+            const dirty = checked !== !!r.checked;
             const on = r.row === state.selectedId;
-            return `<tr data-row="${r.row}" class="row-hover border-t border-paper-line cursor-pointer ${on ? "bg-[#eef6f1]" : ""}">
-              <td class="px-3 py-2.5">
-                <input type="checkbox" class="w-4 h-4 accent-ok" data-check="${r.row}" ${r.checked ? "checked" : ""} />
+            return `<tr data-row="${r.row}" class="row-hover border-t border-paper-line cursor-pointer ${on ? "bg-[#eef6f1]" : ""} ${dirty ? "bg-[#fff8e8]" : ""}">
+              <td class="px-3 py-2">
+                <input type="checkbox" class="w-5 h-5 accent-ok" data-check="${r.row}" ${checked ? "checked" : ""} />
               </td>
-              <td class="px-3 py-2.5 whitespace-nowrap">${esc(r.date)}</td>
-              <td class="px-3 py-2.5">${esc(r.vendor)}</td>
-              <td class="px-3 py-2.5 font-medium">${esc(r.name)}</td>
-              <td class="px-3 py-2.5 text-black/60">${esc(r.spec)}</td>
-              <td class="px-3 py-2.5 text-right tabular-nums">${esc(r.final || r.qty)}</td>
-              <td class="px-3 py-2.5">
-                <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${r.checked ? "badge-ok" : "badge-wait"}">
-                  ${r.checked ? "검수완료" : "검수대기"}
+              <td class="px-3 py-2 whitespace-nowrap">${esc(formatDate(r.date))}</td>
+              <td class="px-3 py-2">${esc(r.vendor)}</td>
+              <td class="px-3 py-2 font-medium">${esc(r.name)}</td>
+              <td class="px-3 py-2 text-black/60">${esc(r.spec)}</td>
+              <td class="px-3 py-2 text-right tabular-nums">${esc(r.final || r.qty)}</td>
+              <td class="px-3 py-2">
+                <span class="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${checked ? "badge-ok" : "badge-wait"}">
+                  ${checked ? "검수완료" : "검수대기"}${dirty ? "*" : ""}
                 </span>
               </td>
             </tr>`;
@@ -435,28 +498,26 @@ function tableHtml(rows) {
 }
 
 function cardsHtml(rows) {
-  if (state.loading) return `<div class="mobile-only p-6 text-sm text-black/50">불러오는 중…</div>`;
-  if (!rows.length) return `<div class="mobile-only p-6 text-sm text-black/50">표시할 입고가 없습니다.</div>`;
+  if (state.loading) return `<div class="mobile-only p-4 text-sm text-black/50">불러오는 중…</div>`;
+  if (!rows.length) return `<div class="mobile-only p-4 text-sm text-black/50">조건에 맞는 입고가 없습니다.</div>`;
   return `
-    <div class="mobile-only space-y-3 pb-24">
-      ${rows.map((r) => `
-        <article data-row="${r.row}" class="card-press bg-white border border-paper-line rounded-2xl p-4 shadow-sm flex gap-3 items-stretch">
+    <div class="mobile-only dense-list pb-24">
+      ${rows.map((r) => {
+        const checked = draftChecked(r);
+        const dirty = checked !== !!r.checked;
+        return `
+        <label class="dense-row ${dirty ? "is-dirty" : ""} ${checked ? "is-checked" : ""}">
           <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-2 mb-1">
-              <span class="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${r.checked ? "badge-ok" : "badge-wait"}">
-                ${r.checked ? "검수완료" : "검수대기"}
-              </span>
-              <span class="text-xs text-black/45">${esc(r.date)}</span>
+            <div class="flex items-center gap-1.5 mb-0.5">
+              <span class="text-[10px] font-semibold ${checked ? "text-ok" : "text-wait"}">${checked ? "완료" : "대기"}${dirty ? "*" : ""}</span>
+              <span class="text-[10px] text-black/40 truncate">${esc(formatDate(r.date))} · ${esc(r.vendor)}</span>
             </div>
-            <div class="font-bold text-[17px] leading-snug">${esc(r.name)}</div>
-            <div class="text-sm text-black/55 mt-1">${esc(r.vendor)}</div>
-            <div class="text-sm text-black/45 mt-1">${esc(r.spec)} · 수량 <b class="text-brand-ink">${esc(r.final || r.qty)}</b></div>
+            <div class="font-bold text-[15px] leading-tight truncate">${esc(r.name)}</div>
+            <div class="text-[11px] text-black/50 truncate mt-0.5">${esc(r.spec)} · <b class="text-brand-ink">${esc(r.final || r.qty)}</b></div>
           </div>
-          <button data-orb="${r.row}" class="check-orb shrink-0 self-center ${r.checked ? "bg-ok text-white" : "bg-[#fff7ee] text-wait border border-[#f0d2b0]"}" aria-label="검수 체크">
-            <i class="fa-solid ${r.checked ? "fa-check" : "fa-circle"} text-lg"></i>
-          </button>
-        </article>
-      `).join("")}
+          <input type="checkbox" class="dense-check" data-check="${r.row}" ${checked ? "checked" : ""} />
+        </label>`;
+      }).join("")}
     </div>`;
 }
 
@@ -464,11 +525,12 @@ function detailHtml() {
   const row = selectedRow();
   if (!row) {
     return `
-      <aside class="desktop-only w-80 shrink-0 border-l border-paper-line bg-paper-card p-5 overflow-y-auto scroll-thin">
+      <aside class="desktop-only w-80 shrink-0 border-l border-paper-line bg-paper-card p-5">
         <h3 class="font-bold text-lg mb-2">선택 전표 상세</h3>
-        <p class="text-sm text-black/50">왼쪽 목록에서 전표를 선택하세요.</p>
+        <p class="text-sm text-black/50">목록에서 전표를 선택하세요.</p>
       </aside>`;
   }
+  const checked = draftChecked(row);
   return `
     <aside class="desktop-only w-80 shrink-0 border-l border-paper-line bg-paper-card p-5 overflow-y-auto scroll-thin">
       <h3 class="font-bold text-lg mb-4">선택 전표 상세</h3>
@@ -476,29 +538,23 @@ function detailHtml() {
         <div class="text-xs text-black/45 mb-1">거래처</div>
         <div class="font-bold text-lg">${esc(row.vendor)}</div>
         <div class="mt-3 grid grid-cols-2 gap-3 text-sm">
-          <div><div class="text-xs text-black/45">거래일</div><div class="font-medium">${esc(row.date)}</div></div>
-          <div><div class="text-xs text-black/45">상태</div>
-            <span class="inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${row.checked ? "badge-ok" : "badge-wait"}">${row.checked ? "검수완료" : "검수대기"}</span>
+          <div><div class="text-xs text-black/45">거래일</div><div class="font-medium">${esc(formatDate(row.date))}</div></div>
+          <div><div class="text-xs text-black/45">화면 체크</div>
+            <span class="inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${checked ? "badge-ok" : "badge-wait"}">${checked ? "검수완료" : "검수대기"}</span>
           </div>
           <div class="col-span-2"><div class="text-xs text-black/45">품목</div><div class="font-medium">${esc(row.name)}</div></div>
           <div><div class="text-xs text-black/45">규격</div><div>${esc(row.spec)}</div></div>
           <div><div class="text-xs text-black/45">반영수량</div><div class="font-semibold">${esc(row.final || row.qty)}</div></div>
-          <div class="col-span-2"><div class="text-xs text-black/45">코드</div><div>${esc(row.code || "코드 없음")}</div></div>
-          ${row.biz ? `<div class="col-span-2"><div class="text-xs text-black/45">사업자번호</div><div>${esc(row.biz)}</div></div>` : ""}
-          ${row.amount ? `<div class="col-span-2"><div class="text-xs text-black/45">금액</div><div class="font-semibold">${esc(row.amount)}</div></div>` : ""}
         </div>
-        <button id="detailToggle" class="mt-4 w-full tap rounded-xl ${row.checked ? "bg-black/5 text-brand" : "bg-ok text-white"} font-semibold">
-          ${row.checked ? "검수대기로 되돌리기" : "검수완료 처리"}
-        </button>
+        <label class="mt-4 flex items-center gap-3 tap rounded-xl border border-paper-line px-3">
+          <input type="checkbox" class="w-5 h-5 accent-ok" data-check="${row.row}" ${checked ? "checked" : ""} />
+          <span class="text-sm font-medium">이 전표 검수 체크</span>
+        </label>
+        <p class="mt-2 text-[11px] text-black/45">체크 후 상단 <b>적용</b>을 눌러야 저장됩니다.</p>
       </div>
       <div class="text-sm font-semibold mb-2">영수증 / 명세서 미리보기</div>
-      <div class="receipt-frame rounded-2xl border border-dashed border-paper-line overflow-hidden min-h-[280px] grid place-items-center text-center p-4">
-        ${row.imageUrl
-          ? `<img src="${esc(row.imageUrl)}" alt="명세서" class="max-h-[360px] w-full object-contain bg-white" />`
-          : `<div class="text-black/45 text-sm leading-relaxed">
-              <i class="fa-regular fa-image text-3xl mb-3 block text-brand/40"></i>
-              이미지 첨부 전입니다.<br/>구글 드라이브 연동 후 여기에 표시됩니다.
-            </div>`}
+      <div class="receipt-frame rounded-2xl border border-dashed border-paper-line min-h-[220px] grid place-items-center text-center p-4 text-sm text-black/45">
+        <div><i class="fa-regular fa-image text-3xl mb-2 block text-brand/30"></i>이미지 연동 예정</div>
       </div>
     </aside>`;
 }
@@ -509,7 +565,7 @@ function placeholderMenu(title) {
       <div>
         <div class="text-4xl text-brand/25 mb-3"><i class="fa-solid fa-screwdriver-wrench"></i></div>
         <h2 class="text-xl font-bold mb-2">${esc(title)}</h2>
-        <p class="text-sm text-black/50">이 메뉴는 다음 단계에서 연결됩니다.</p>
+        <p class="text-sm text-black/50">다음 단계에서 연결됩니다.</p>
       </div>
     </div>`;
 }
@@ -517,9 +573,9 @@ function placeholderMenu(title) {
 function renderApp() {
   const rows = visibleRows();
   const inspectMain = `
-    <section class="flex-1 min-w-0 min-h-0 flex flex-col p-4 lg:p-6 overflow-hidden">
+    <section class="flex-1 min-w-0 min-h-0 flex flex-col p-3 lg:p-6 overflow-hidden">
       ${toolbarHtml()}
-      ${state.error ? `<div class="mb-3 text-sm text-red-700">${esc(state.error)}</div>` : ""}
+      ${state.error ? `<div class="mb-2 text-sm text-red-700">${esc(state.error)}</div>` : ""}
       <div class="flex-1 min-h-0 overflow-y-auto scroll-thin">
         ${tableHtml(rows)}
         ${cardsHtml(rows)}
@@ -544,7 +600,6 @@ function renderApp() {
       </div>
       ${state.toast ? `<div class="fixed left-1/2 -translate-x-1/2 bottom-24 lg:bottom-8 z-50 bg-brand text-white text-sm px-4 py-2.5 rounded-full shadow-lg">${esc(state.toast)}</div>` : ""}
     </div>`;
-
   bindAppEvents();
 }
 
@@ -556,24 +611,39 @@ function bindAppEvents() {
     };
   });
 
+  const dateEl = document.getElementById("filterDate");
+  if (dateEl) {
+    dateEl.onchange = () => {
+      state.filterDate = dateEl.value;
+      state.filterVendor = "전체";
+      render();
+    };
+  }
+  const vendorEl = document.getElementById("filterVendor");
+  if (vendorEl) {
+    vendorEl.onchange = () => {
+      state.filterVendor = vendorEl.value;
+      render();
+    };
+  }
+
   const search = document.getElementById("searchInput");
   if (search) {
     search.oninput = () => {
       state.query = search.value;
-      // 입력 중 전체 리렌더 대신 목록만 다시 — 단순화를 위해 debounce render
       clearTimeout(bindAppEvents._q);
       bindAppEvents._q = setTimeout(render, 120);
     };
   }
 
-  const refresh = () => loadInspection();
-  document.getElementById("btnRefresh")?.addEventListener("click", refresh);
-  document.getElementById("mobileRefresh")?.addEventListener("click", refresh);
   document.getElementById("btnPending")?.addEventListener("click", () => {
     state.pendingOnly = !state.pendingOnly;
     render();
   });
-  document.getElementById("btnBulk")?.addEventListener("click", () => bulkComplete());
+  document.getElementById("btnRefresh")?.addEventListener("click", () => loadInspection());
+  document.getElementById("mobileRefresh")?.addEventListener("click", () => loadInspection());
+  document.getElementById("btnApply")?.addEventListener("click", () => applyDraft());
+  document.getElementById("mobileApply")?.addEventListener("click", () => applyDraft());
 
   document.querySelectorAll("tr[data-row]").forEach((tr) => {
     tr.onclick = (e) => {
@@ -582,26 +652,13 @@ function bindAppEvents() {
       render();
     };
   });
+
   document.querySelectorAll("input[data-check]").forEach((box) => {
-    box.onchange = () => toggleCheck(Number(box.getAttribute("data-check")), box.checked);
-  });
-  document.querySelectorAll("button[data-orb]").forEach((btn) => {
-    btn.onclick = (e) => {
+    box.onchange = (e) => {
       e.stopPropagation();
-      const id = Number(btn.getAttribute("data-orb"));
-      const row = state.rows.find((r) => r.row === id);
-      if (row) toggleCheck(id, !row.checked);
+      setDraft(Number(box.getAttribute("data-check")), box.checked);
     };
-  });
-  document.querySelectorAll("article[data-row]").forEach((card) => {
-    card.onclick = () => {
-      state.selectedId = Number(card.getAttribute("data-row"));
-      // 모바일은 상세 패널 없음 — 선택만 유지
-    };
-  });
-  document.getElementById("detailToggle")?.addEventListener("click", () => {
-    const row = selectedRow();
-    if (row) toggleCheck(row.row, !row.checked);
+    box.onclick = (e) => e.stopPropagation();
   });
 }
 

@@ -57,6 +57,11 @@ function handleApi_(body) {
     var message = saveInspection(pin, changes);
     return { ok: true, count: changes.length, message: message };
   }
+  if (action === "applyInspection") {
+    var list = body.changes || [];
+    var msg = saveInspection(pin, list);
+    return { ok: true, count: list.length, message: msg };
+  }
   if (action === "stockList") {
     return stockList(pin);
   }
