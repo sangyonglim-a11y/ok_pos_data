@@ -25,6 +25,16 @@ body {
   min-width: 44px;
 }
 
+/* 필터 콤보/검색은 작게 */
+.compact-control {
+  min-height: 34px !important;
+  height: 34px;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  font-size: 12px !important;
+  line-height: 34px;
+}
+
 .nav-item {
   transition: background .18s ease, transform .18s ease, color .18s ease;
 }
@@ -51,14 +61,30 @@ body {
   min-height: 56px;
   background: #fff;
 }
-.dense-row.is-dirty { background: #fff8e8; }
-.dense-row.is-checked { background: #f4faf6; }
+.dense-row.is-dirty {
+  background: #fff4d6;
+  box-shadow: inset 3px 0 0 #e2a93a;
+}
+.dense-row.is-checked:not(.is-dirty) { background: #f4faf6; }
 .dense-check {
   width: 22px;
   height: 22px;
   accent-color: #1f7a4c;
   flex: 0 0 auto;
 }
+.chip-saved, .chip-now, .chip-pending {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.chip-saved { background: #ececec; color: #666; }
+.chip-now.on { background: #e7f6ee; color: #1f7a4c; }
+.chip-now.off { background: #fff1e0; color: #c46a1b; }
+.chip-pending { background: #ffe08a; color: #7a5200; }
 
 .receipt-frame {
   background:

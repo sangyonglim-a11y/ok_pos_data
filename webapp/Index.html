@@ -49,6 +49,16 @@ body {
   min-width: 44px;
 }
 
+/* 필터 콤보/검색은 작게 */
+.compact-control {
+  min-height: 34px !important;
+  height: 34px;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  font-size: 12px !important;
+  line-height: 34px;
+}
+
 .nav-item {
   transition: background .18s ease, transform .18s ease, color .18s ease;
 }
@@ -75,14 +85,30 @@ body {
   min-height: 56px;
   background: #fff;
 }
-.dense-row.is-dirty { background: #fff8e8; }
-.dense-row.is-checked { background: #f4faf6; }
+.dense-row.is-dirty {
+  background: #fff4d6;
+  box-shadow: inset 3px 0 0 #e2a93a;
+}
+.dense-row.is-checked:not(.is-dirty) { background: #f4faf6; }
 .dense-check {
   width: 22px;
   height: 22px;
   accent-color: #1f7a4c;
   flex: 0 0 auto;
 }
+.chip-saved, .chip-now, .chip-pending {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.chip-saved { background: #ececec; color: #666; }
+.chip-now.on { background: #e7f6ee; color: #1f7a4c; }
+.chip-now.off { background: #fff1e0; color: #c46a1b; }
+.chip-pending { background: #ffe08a; color: #7a5200; }
 
 .receipt-frame {
   background:
@@ -302,13 +328,26 @@ async function applyDraft() {
   state.applying = true;
   render();
   try {
-    const result = await api("applyInspection", { changes });
-    changes.forEach((c) => {
-      const row = state.rows.find((r) => r.row === c.row);
-      if (row) row.checked = c.checked;
-    });
-    resetDraftFromRows();
-    toast(result.message || `${changes.length}건 적용했습니다.`);
+    // 새 Api.gs 의 applyInspection 우선, 없으면 기존 setInspection 으로 한 건씩
+    try {
+      const result = await api("applyInspection", { changes });
+      changes.forEach((c) => {
+        const row = state.rows.find((r) => r.row === c.row);
+        if (row) row.checked = c.checked;
+      });
+      resetDraftFromRows();
+      toast(result.message || `${changes.length}건 적용했습니다.`);
+    } catch (err) {
+      const msg = String(err && err.message ? err.message : err);
+      if (!/지원하지 않는|action/i.test(msg)) throw err;
+      for (const c of changes) {
+        await api("setInspection", { row: c.row, checked: c.checked });
+        const row = state.rows.find((r) => r.row === c.row);
+        if (row) row.checked = c.checked;
+      }
+      resetDraftFromRows();
+      toast(`${changes.length}건 적용했습니다.`);
+    }
   } catch (err) {
     toast(err.message || "적용에 실패했습니다.");
   } finally {
@@ -422,35 +461,35 @@ function toolbarHtml() {
         <h2 class="text-xl font-bold tracking-tight">${esc(state.month || "—")} 실물 검수</h2>
         <div class="text-sm text-black/50">변경 ${dirty}건 · 대기 ${waitingCount()}건</div>
       </div>
-      <div class="grid grid-cols-2 gap-2 lg:grid-cols-4">
+      <div class="grid grid-cols-2 gap-1.5 lg:grid-cols-4">
         <label class="block">
           <span class="sr-only">거래일자</span>
-          <select id="filterDate" class="w-full tap rounded-xl border border-paper-line bg-white px-3 text-sm">
+          <select id="filterDate" class="compact-control w-full rounded-lg border border-paper-line bg-white px-2">
             ${dates.map((d) => `<option value="${esc(d)}" ${d === state.filterDate ? "selected" : ""}>${d === "전체" ? "날짜: 전체" : d}</option>`).join("")}
           </select>
         </label>
         <label class="block">
           <span class="sr-only">거래처</span>
-          <select id="filterVendor" class="w-full tap rounded-xl border border-paper-line bg-white px-3 text-sm">
+          <select id="filterVendor" class="compact-control w-full rounded-lg border border-paper-line bg-white px-2">
             ${vendors.map((v) => `<option value="${esc(v)}" ${v === state.filterVendor ? "selected" : ""}>${v === "전체" ? "거래처: 전체" : esc(v)}</option>`).join("")}
           </select>
         </label>
-        <button id="btnPending" class="tap rounded-xl border border-paper-line bg-white px-3 text-sm">
-          ${state.pendingOnly ? "대기만 보기" : "전체 보기"}
+        <button id="btnPending" class="compact-control rounded-lg border border-paper-line bg-white px-2 text-xs">
+          ${state.pendingOnly ? "대기만" : "전체"}
         </button>
-        <button id="btnApply" class="desktop-only tap rounded-xl bg-ok text-white px-4 text-sm font-bold ${dirty ? "hover:brightness-110" : "opacity-50"}" ${dirty && !state.applying ? "" : "disabled"}>
-          ${state.applying ? "적용 중…" : `적용${dirty ? ` (${dirty})` : ""}`}
+        <button id="btnApply" class="desktop-only compact-control rounded-lg bg-ok text-white px-3 text-xs font-bold ${dirty ? "hover:brightness-110" : "opacity-50"}" ${dirty && !state.applying ? "" : "disabled"}>
+          ${state.applying ? "적용 중…" : `적용${dirty ? ` ${dirty}` : ""}`}
         </button>
       </div>
-      <div class="flex gap-2">
+      <div class="flex gap-1.5">
         <div class="relative flex-1">
-          <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-black/35 text-xs"></i>
+          <i class="fa-solid fa-magnifying-glass absolute left-2.5 top-1/2 -translate-y-1/2 text-black/35 text-[10px]"></i>
           <input id="searchInput" value="${esc(state.query)}" placeholder="품목·코드 검색"
-            class="w-full tap rounded-xl border border-paper-line bg-white pl-8 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand/25" />
+            class="compact-control w-full rounded-lg border border-paper-line bg-white pl-7 pr-2 focus:outline-none focus:ring-2 focus:ring-brand/25" />
         </div>
-        <button id="btnRefresh" class="tap rounded-xl border border-paper-line bg-white px-3"><i class="fa-solid fa-rotate-right"></i></button>
+        <button id="btnRefresh" class="compact-control rounded-lg border border-paper-line bg-white px-2"><i class="fa-solid fa-rotate-right text-xs"></i></button>
       </div>
-      <p class="text-[11px] text-black/45">체크만 하고, 위 <b>적용</b>을 눌러야 시트에 반영됩니다.</p>
+      <p class="text-[11px] text-black/45">노란 줄 = 아직 시트에 안 넣은 변경. <b>적용</b>을 눌러야 저장됩니다.</p>
     </div>`;
 }
 
@@ -473,12 +512,13 @@ function tableHtml(rows) {
         </thead>
         <tbody>
           ${rows.map((r) => {
-            const checked = draftChecked(r);
-            const dirty = checked !== !!r.checked;
+            const draft = draftChecked(r);
+            const saved = !!r.checked;
+            const dirty = draft !== saved;
             const on = r.row === state.selectedId;
-            return `<tr data-row="${r.row}" class="row-hover border-t border-paper-line cursor-pointer ${on ? "bg-[#eef6f1]" : ""} ${dirty ? "bg-[#fff8e8]" : ""}">
+            return `<tr data-row="${r.row}" class="row-hover border-t border-paper-line cursor-pointer ${on ? "bg-[#eef6f1]" : ""} ${dirty ? "bg-[#fff4d6] ring-1 ring-inset ring-[#f0c56d]" : ""}">
               <td class="px-3 py-2">
-                <input type="checkbox" class="w-5 h-5 accent-ok" data-check="${r.row}" ${checked ? "checked" : ""} />
+                <input type="checkbox" class="w-5 h-5 accent-ok" data-check="${r.row}" ${draft ? "checked" : ""} title="지금 체크(미적용 가능)" />
               </td>
               <td class="px-3 py-2 whitespace-nowrap">${esc(formatDate(r.date))}</td>
               <td class="px-3 py-2">${esc(r.vendor)}</td>
@@ -486,9 +526,10 @@ function tableHtml(rows) {
               <td class="px-3 py-2 text-black/60">${esc(r.spec)}</td>
               <td class="px-3 py-2 text-right tabular-nums">${esc(r.final || r.qty)}</td>
               <td class="px-3 py-2">
-                <span class="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${checked ? "badge-ok" : "badge-wait"}">
-                  ${checked ? "검수완료" : "검수대기"}${dirty ? "*" : ""}
-                </span>
+                <div class="flex flex-col gap-1 items-start">
+                  <span class="inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold bg-black/5 text-black/55">시트: ${saved ? "완료" : "대기"}</span>
+                  <span class="inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${draft ? "badge-ok" : "badge-wait"}">지금: ${draft ? "완료" : "대기"}${dirty ? " · 미적용" : ""}</span>
+                </div>
               </td>
             </tr>`;
           }).join("")}
@@ -503,19 +544,22 @@ function cardsHtml(rows) {
   return `
     <div class="mobile-only dense-list pb-24">
       ${rows.map((r) => {
-        const checked = draftChecked(r);
-        const dirty = checked !== !!r.checked;
+        const draft = draftChecked(r);
+        const saved = !!r.checked;
+        const dirty = draft !== saved;
         return `
-        <label class="dense-row ${dirty ? "is-dirty" : ""} ${checked ? "is-checked" : ""}">
+        <label class="dense-row ${dirty ? "is-dirty" : ""} ${draft ? "is-checked" : ""}">
           <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-1.5 mb-0.5">
-              <span class="text-[10px] font-semibold ${checked ? "text-ok" : "text-wait"}">${checked ? "완료" : "대기"}${dirty ? "*" : ""}</span>
+            <div class="flex items-center gap-1 flex-wrap mb-0.5">
+              <span class="chip-saved">시트 ${saved ? "완료" : "대기"}</span>
+              <span class="chip-now ${draft ? "on" : "off"}">지금 ${draft ? "완료" : "대기"}</span>
+              ${dirty ? `<span class="chip-pending">미적용</span>` : ""}
               <span class="text-[10px] text-black/40 truncate">${esc(formatDate(r.date))} · ${esc(r.vendor)}</span>
             </div>
             <div class="font-bold text-[15px] leading-tight truncate">${esc(r.name)}</div>
             <div class="text-[11px] text-black/50 truncate mt-0.5">${esc(r.spec)} · <b class="text-brand-ink">${esc(r.final || r.qty)}</b></div>
           </div>
-          <input type="checkbox" class="dense-check" data-check="${r.row}" ${checked ? "checked" : ""} />
+          <input type="checkbox" class="dense-check" data-check="${r.row}" ${draft ? "checked" : ""} />
         </label>`;
       }).join("")}
     </div>`;
@@ -530,27 +574,31 @@ function detailHtml() {
         <p class="text-sm text-black/50">목록에서 전표를 선택하세요.</p>
       </aside>`;
   }
-  const checked = draftChecked(row);
+  const draft = draftChecked(row);
+  const saved = !!row.checked;
+  const dirty = draft !== saved;
   return `
     <aside class="desktop-only w-80 shrink-0 border-l border-paper-line bg-paper-card p-5 overflow-y-auto scroll-thin">
       <h3 class="font-bold text-lg mb-4">선택 전표 상세</h3>
-      <div class="rounded-2xl border border-paper-line bg-white p-4 shadow-sm mb-4">
+      <div class="rounded-2xl border border-paper-line bg-white p-4 shadow-sm mb-4 ${dirty ? "ring-2 ring-[#f0c56d]" : ""}">
         <div class="text-xs text-black/45 mb-1">거래처</div>
         <div class="font-bold text-lg">${esc(row.vendor)}</div>
         <div class="mt-3 grid grid-cols-2 gap-3 text-sm">
           <div><div class="text-xs text-black/45">거래일</div><div class="font-medium">${esc(formatDate(row.date))}</div></div>
-          <div><div class="text-xs text-black/45">화면 체크</div>
-            <span class="inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${checked ? "badge-ok" : "badge-wait"}">${checked ? "검수완료" : "검수대기"}</span>
+          <div class="col-span-2 flex flex-wrap gap-1">
+            <span class="chip-saved">시트: ${saved ? "완료" : "대기"}</span>
+            <span class="chip-now ${draft ? "on" : "off"}">지금: ${draft ? "완료" : "대기"}</span>
+            ${dirty ? `<span class="chip-pending">미적용</span>` : ""}
           </div>
           <div class="col-span-2"><div class="text-xs text-black/45">품목</div><div class="font-medium">${esc(row.name)}</div></div>
           <div><div class="text-xs text-black/45">규격</div><div>${esc(row.spec)}</div></div>
           <div><div class="text-xs text-black/45">반영수량</div><div class="font-semibold">${esc(row.final || row.qty)}</div></div>
         </div>
         <label class="mt-4 flex items-center gap-3 tap rounded-xl border border-paper-line px-3">
-          <input type="checkbox" class="w-5 h-5 accent-ok" data-check="${row.row}" ${checked ? "checked" : ""} />
+          <input type="checkbox" class="w-5 h-5 accent-ok" data-check="${row.row}" ${draft ? "checked" : ""} />
           <span class="text-sm font-medium">이 전표 검수 체크</span>
         </label>
-        <p class="mt-2 text-[11px] text-black/45">체크 후 상단 <b>적용</b>을 눌러야 저장됩니다.</p>
+        <p class="mt-2 text-[11px] text-black/45">체크 후 상단 <b>적용</b>을 눌러야 시트에 저장됩니다.</p>
       </div>
       <div class="text-sm font-semibold mb-2">영수증 / 명세서 미리보기</div>
       <div class="receipt-frame rounded-2xl border border-dashed border-paper-line min-h-[220px] grid place-items-center text-center p-4 text-sm text-black/45">
