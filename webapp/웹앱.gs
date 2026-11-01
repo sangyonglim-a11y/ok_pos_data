@@ -6,12 +6,7 @@ var APP_PIN = "9338892";
 var SPREADSHEET_ID = "1JY9OGCLp0KlnilDdW3Oyl4vcSogRCMTmQyFsQeA2Gqg";
 var CATEGORIES = ["고기", "주류", "하이볼", "식사", "사이드", "음료", "야채", "공산품", "기타"];
 
-function doGet() {
-  return HtmlService.createHtmlOutputFromFile("Index")
-    .setTitle("중계고기파티 재고")
-    .addMetaTag("viewport", "width=device-width, initial-scale=1, viewport-fit=cover")
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-}
+// doGet / doPost 는 Api.gs 에만 둡니다. (같은 이름 함수가 두 개면 배포가 깨집니다)
 
 function stockList(pin) {
   assertPin_(pin);
