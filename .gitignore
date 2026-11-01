@@ -25,6 +25,7 @@ venv/
 build/
 dist/
 installer/output/
+매장배포_USB/
 *.exe
 *.log
 
@@ -41,6 +42,7 @@ web/.next/
 web/out/
 web/.vercel/
 web/vercel-env-*.b64.txt
+web/vercel-env-*.min.json
 web/.env.local
 
 # os / ide

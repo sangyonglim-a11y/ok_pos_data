@@ -1,0 +1,19 @@
+중계고기파티 — 매장 PC OKPOS 수집 에이전트
+
+[처음 설치]
+1. OkposAgentSetup.exe 실행
+2. 설치가 끝나면 열린 폴더에 아래 파일을 복사
+   - config.json          (OKPOS 계정·영업시간)
+   - okpos-inventory-....json  (구글 서비스계정)
+3. config.json 의 service_account_file 이름을 복사한 JSON 파일명과 같게 맞춤
+4. 바탕화면 "OKPOS 판매수집" 으로 한 번 수동 실행해 확인
+5. 이후 영업시간 중 30분마다 화면 없이 자동 수집
+
+[업데이트 — 가장 쉬운 방법]
+1. 사장님 PC에서 새 OkposAgentSetup.exe 를 USB/카톡으로 매장에 보냄
+2. 매장에서 그 파일을 다시 실행 (덮어쓰기 설치)
+   → config.json 과 서비스계정 JSON 은 그대로 유지됩니다
+또는 바탕화면 "OKPOS 에이전트 업데이트" (GitHub Release 사용 시)
+
+[삭제]
+Windows 설정 → 앱 → 중계고기파티 OKPOS 수집 → 제거
