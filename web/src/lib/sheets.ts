@@ -8,7 +8,7 @@ function a1(sheet: string, range: string) {
   return `'${sheet.replace(/'/g, "''")}'!${range}`;
 }
 
-function credentials() {
+export function credentials() {
   let raw = (process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "").trim();
   if (!raw) {
     throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON 환경변수가 없습니다.");
@@ -75,9 +75,16 @@ export function publicSheetsError(err: unknown) {
     "";
 
   if (status === 404 || /Requested entity was not found/i.test(detail)) {
+    let used = "";
+    try {
+      used = sheetId();
+    } catch {
+      used = "(없음)";
+    }
     return (
-      "구글 시트를 찾지 못했습니다. Vercel의 SHEET_ID 가 맞는지, " +
-      "시트에 pos-bot@okpos-inventory.iam.gserviceaccount.com 편집자를 공유했는지 확인하세요."
+      `구글 시트를 찾지 못했습니다. 지금 쓰는 SHEET_ID=${used}. ` +
+      "Vercel 값에 공백/따옴표가 없는지, 시트 공유에 " +
+      "pos-bot@okpos-inventory.iam.gserviceaccount.com 편집자가 있는지 확인하세요."
     );
   }
   if (status === 403 || /permission|forbidden|The caller does not have permission/i.test(detail)) {
