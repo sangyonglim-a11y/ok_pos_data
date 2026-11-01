@@ -1,0 +1,17 @@
+중계고기파티 웹앱 배포
+
+[A] Vercel (지금 저장소 web/)
+1. 배포 후 주소: https://(프로젝트).vercel.app/app/
+2. API_URL 이 비어 있으면 목업 데이터로 화면만 확인 가능
+3. Apps Script 웹앱 URL 을 받은 뒤
+   web/public/app/app.js 상단 API_URL 에 넣고 재배포
+
+[B] 구글 앱스 스크립트 (시트에 직접 붙이기)
+1. 스프레드시트 > 확장 프로그램 > Apps Script
+2. 웹앱.gs + Api.gs 내용을 프로젝트에 넣기
+3. Index.html 은 webapp/Index.html (단일 파일) 업로드
+4. 배포 > 새 배포 > 웹앱
+   - 실행: 나
+   - 액세스: 모든 사용자
+5. 배포 URL 을 SPA 의 API_URL 에도 동일하게 넣으면
+   Vercel 화면 ↔ 시트 연동이 됩니다.

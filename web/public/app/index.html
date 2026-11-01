@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#163028" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>중계고기파티 재고</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { DEFAULT: "#163028", soft: "#1e3f34", mist: "#d7e3dc", ink: "#13241e" },
+            paper: { DEFAULT: "#f4f1eb", card: "#fffcf7", line: "#e4ddd2" },
+            ok: "#1f7a4c", wait: "#c46a1b"
+          },
+          boxShadow: {
+            panel: "0 10px 30px rgba(22,48,40,.08)"
+          }
+        }
+      }
+    };
+  </script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body class="bg-paper text-brand-ink antialiased">
+  <div id="root"></div>
+  <script src="./app.js"></script>
+</body>
+</html>

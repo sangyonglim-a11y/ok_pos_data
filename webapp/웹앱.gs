@@ -2,7 +2,7 @@
 // 배포: 확장 프로그램 > Apps Script 에 이 파일과 Index.html 을 넣고
 // 배포 > 웹 앱 > 실행: 나, 액세스: 모든 사용자.
 // 비밀번호는 아래 APP_PIN 입니다. 배포 전에 바꿔도 됩니다.
-var APP_PIN = "739264";
+var APP_PIN = "9338892";
 var SPREADSHEET_ID = "1JY9OGCLp0KlnilDdW3Oyl4vcSogRCMTmQyFsQeA2Gqg";
 var CATEGORIES = ["고기", "주류", "하이볼", "식사", "사이드", "음료", "야채", "공산품", "기타"];
 
@@ -103,7 +103,10 @@ function inspectionList(pin) {
       qty: text_(row[9]),
       code: text_(row[12]),
       final: text_(row[14]),
-      checked: checked_(row[15])
+      checked: checked_(row[15]),
+      biz: text_(row[4]),
+      amount: text_(row[10]),
+      imageUrl: ""
     });
   }
   rows.sort(function(a, b) {

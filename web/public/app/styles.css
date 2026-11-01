@@ -1,0 +1,68 @@
+:root {
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  font-family: "Pretendard", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  background:
+    radial-gradient(1200px 500px at 10% -10%, rgba(31,122,76,.08), transparent 55%),
+    linear-gradient(180deg, #efeae2 0%, #f4f1eb 40%, #f7f4ef 100%);
+}
+
+/* custom scrollbars */
+.scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: #c9c1b4;
+  border-radius: 999px;
+}
+.scroll-thin::-webkit-scrollbar-track { background: transparent; }
+
+.tap {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.nav-item {
+  transition: background .18s ease, transform .18s ease, color .18s ease;
+}
+.nav-item:hover { transform: translateX(2px); }
+
+.row-hover:hover { background: #f7faf7; }
+
+.card-press:active { transform: scale(.985); }
+
+.badge-ok { background: #e7f6ee; color: #1f7a4c; }
+.badge-wait { background: #fff1e0; color: #c46a1b; }
+
+.check-orb {
+  width: 52px;
+  height: 52px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  transition: transform .15s ease, background .15s ease, box-shadow .15s ease;
+  box-shadow: 0 8px 18px rgba(22,48,40,.12);
+}
+.check-orb:active { transform: scale(.94); }
+
+.receipt-frame {
+  background:
+    linear-gradient(135deg, rgba(22,48,40,.06), rgba(22,48,40,.02)),
+    repeating-linear-gradient(
+      -12deg,
+      transparent,
+      transparent 10px,
+      rgba(22,48,40,.03) 10px,
+      rgba(22,48,40,.03) 11px
+    );
+}
+
+@media (max-width: 1023px) {
+  .desktop-only { display: none !important; }
+}
+@media (min-width: 1024px) {
+  .mobile-only { display: none !important; }
+}
