@@ -186,6 +186,9 @@ function checked_(value) {
 }
 
 function text_(value) {
+  if (Object.prototype.toString.call(value) === "[object Date]" && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, "Asia/Seoul", "yyyy-MM-dd");
+  }
   return String(value === null || value === undefined ? "" : value).trim();
 }
 
