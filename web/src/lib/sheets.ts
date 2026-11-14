@@ -136,7 +136,7 @@ export async function loadLiveStock() {
   const sheets = await sheetsClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId(),
-    range: a1(STOCK_SHEET, "A:N"),
+    range: a1(STOCK_SHEET, "A:O"),
   });
   const values = res.data.values || [];
   const month = values.length > 1 ? latestMonth(values) : new Date().toISOString().slice(0, 7);
@@ -151,15 +151,16 @@ export async function loadLiveStock() {
       row: i + 1,
       code,
       name: name || code,
-      category: cell(row, 13),
-      unit: cell(row, 12),
+      category: cell(row, 14),
+      unit: cell(row, 11),
       opening: asNumber(cell(row, 4)),
       incoming: asNumber(cell(row, 5)),
       used: asNumber(cell(row, 6)),
-      adjustment: asNumber(cell(row, 7)) ?? 0,
-      stock: asNumber(cell(row, 8)),
-      safety: asNumber(cell(row, 9)),
-      display: cell(row, 10),
+      adjustmentIn: asNumber(cell(row, 7)) ?? 0,
+      adjustment: asNumber(cell(row, 8)) ?? 0,
+      stock: asNumber(cell(row, 9)),
+      safety: asNumber(cell(row, 10)),
+      display: cell(row, 12),
     });
   }
   rows.sort((a, b) => {
@@ -175,7 +176,8 @@ export async function saveLiveStockCell(
   kind: "safety" | "adjustment",
   value: string,
 ) {
-  const column = kind === "safety" ? "J" : "H";
+  // safety=K, adjustment=조정로스(I)
+  const column = kind === "safety" ? "K" : "I";
   const sheets = await sheetsClient();
   await sheets.spreadsheets.values.update({
     spreadsheetId: sheetId(),
@@ -185,12 +187,42 @@ export async function saveLiveStockCell(
   });
   const shown = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId(),
-    range: a1(STOCK_SHEET, `I${rowNumber}:K${rowNumber}`),
+    range: a1(STOCK_SHEET, `E${rowNumber}:N${rowNumber}`),
   });
   const flat = shown.data.values?.[0] || [];
+  const opening = asNumber(String(flat[0] || "")) ?? 0;
+  const incoming = asNumber(String(flat[1] || "")) ?? 0;
+  const used = asNumber(String(flat[2] || "")) ?? 0;
+  const adjIn = asNumber(String(flat[3] || "")) ?? 0;
+  const adjLoss = asNumber(String(flat[4] || "")) ?? 0;
+  const unit = String(flat[7] || "").trim();
+  const spec = String(flat[9] || "").trim();
+  const stock = Math.round((opening + incoming - used + adjIn - adjLoss) * 10000) / 10000;
+  const packMatch = spec.includes("/")
+    ? String(spec.split("/").slice(1).join("/")).match(/\d+(?:\.\d+)?/)
+    : String(spec).match(/\d+(?:\.\d+)?/);
+  const size = packMatch ? Number(packMatch[0]) : 0;
+  let display = `${stock}${unit}`;
+  if (size > 0) {
+    const abs = Math.abs(stock);
+    const boxes = Math.floor(abs / size);
+    if (boxes > 0) {
+      const remain = Math.round((abs % size) * 100) / 100;
+      const prefix = spec.split("/")[0].replace(/\s+/g, " ").trim();
+      const sign = stock < 0 ? "-" : "";
+      display = `${sign}${boxes}${prefix}${remain ? ` ${remain}${unit}` : ""}`;
+    }
+  }
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: sheetId(),
+    range: a1(STOCK_SHEET, `J${rowNumber}:M${rowNumber}`),
+    valueInputOption: "USER_ENTERED",
+    // J현재고 K안전(유지) L단위(유지) M직관
+    requestBody: { values: [[stock, flat[6] ?? "", flat[7] ?? unit, display]] },
+  });
   return {
-    stock: asNumber(String(flat[0] || "")),
-    display: String(flat[2] || "").trim(),
+    stock,
+    display,
     safety: kind === "safety" ? asNumber(value) : undefined,
     adjustment: kind === "adjustment" ? asNumber(value) : undefined,
   };

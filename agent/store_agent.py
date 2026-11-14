@@ -1,6 +1,7 @@
 """매장 PC용 OKPOS 수집 에이전트.
 
-- 자동: 영업시간 중 30분 간격, 화면 없이 실행
+- 자동: 영업시간(기본 11~23시) 중 30분 간격, 화면 없이 실행
+- 날씨: 하루 2회(오전 슬롯·저녁 슬롯) 일별날씨 시트 갱신
 - 수동: 바탕화면 바로가기에서 한 번 실행(완료 안내 창)
 """
 
@@ -21,8 +22,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT if (ROOT / "okpos_crawler.py").exists() else INSTALL_DIR.parent))
 if str(INSTALL_DIR.parent) not in sys.path:
     sys.path.insert(0, str(INSTALL_DIR.parent))
+if str(INSTALL_DIR) not in sys.path:
+    sys.path.insert(0, str(INSTALL_DIR))
 
 import okpos_crawler  # noqa: E402
+
+try:
+    import weather_sync  # noqa: E402
+except ImportError:
+    weather_sync = None  # type: ignore
 
 
 def app_dir() -> Path:
@@ -39,12 +47,11 @@ def load_config() -> dict:
             f"설정 파일이 없습니다: {path}\n"
             f"{example.name} 을 config.json 으로 복사한 뒤 값을 채워 주세요."
         )
-    with path.open(encoding="utf-8") as f:
+    with path.open(encoding="utf-8-sig") as f:
         return json.load(f)
 
 
 def apply_config(config: dict) -> None:
-    """크롤러가 쓰는 경로·시트 URL·로그인 정보를 설정으로 덮어쓴다."""
     sa = config.get("service_account_file") or "okpos-inventory.json"
     sa_path = Path(sa)
     if not sa_path.is_absolute():
@@ -58,6 +65,14 @@ def apply_config(config: dict) -> None:
     os.environ["OKPOS_PASSWORD"] = str(config.get("okpos_password") or "")
 
 
+def service_account_path_(config: dict) -> Path:
+    sa = config.get("service_account_file") or "okpos-inventory.json"
+    sa_path = Path(sa)
+    if not sa_path.is_absolute():
+        sa_path = app_dir() / sa_path
+    return sa_path
+
+
 def parse_hhmm(text: str) -> tuple[int, int]:
     hour, minute = str(text).strip().split(":")
     return int(hour), int(minute)
@@ -69,7 +84,7 @@ def within_business_hours(config: dict, now: datetime | None = None) -> bool:
     days = hours.get("days", list(range(7)))
     if now.weekday() not in days:
         return False
-    start_h, start_m = parse_hhmm(hours.get("start", "10:00"))
+    start_h, start_m = parse_hhmm(hours.get("start", "11:00"))
     end_h, end_m = parse_hhmm(hours.get("end", "23:00"))
     start = now.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
     end = now.replace(hour=end_h, minute=end_m, second=0, microsecond=0)
@@ -86,17 +101,50 @@ def log(message: str) -> None:
         pass
 
 
-def run_once(config: dict, *, silent: bool) -> int:
+def run_weather_once_(config: dict, *, force: bool = False) -> None:
+    """하루 최대 2회(am/pm 슬롯). force=True 면 슬롯 무시하고 1회 실행."""
+    if weather_sync is None:
+        log("weather_sync 모듈 없음 — 날씨 건너뜀")
+        return
+    key = str(config.get("weather_api_key") or config.get("WEATHER_API_KEY") or "").strip()
+    if not key:
+        log("weather_api_key 없음 — 날씨 건너뜀")
+        return
+    slot = weather_sync.should_run_weather(app_dir(), force=force)
+    if not slot:
+        return
+    sheet_url = str(config.get("sheet_url") or "").strip()
+    sa = service_account_path_(config)
+    if not sheet_url or not sa.is_file():
+        log("시트 URL 또는 서비스계정 파일 없음 — 날씨 건너뜀")
+        return
+    try:
+        n = weather_sync.upsert_recent(key, sheet_url, str(sa), days=2)
+        weather_sync.mark_weather_done(app_dir(), slot if slot in ("am", "pm") else "am")
+        log(f"일별날씨 갱신({slot}): {n}행")
+    except Exception as exc:
+        log(f"일별날씨 실패: {exc}")
+
+
+def run_once(config: dict, *, silent: bool, weather_only: bool = False) -> int:
     apply_config(config)
+    if weather_only:
+        run_weather_once_(config, force=True)
+        return 0
+
     period = config.get("period") or "today"
     if silent and not within_business_hours(config):
-        log("영업시간이 아니라 수집을 건너뜁니다.")
+        log("영업시간이 아니라 POS 수집을 건너뜁니다.")
+        run_weather_once_(config, force=False)
         return 0
+
     log(f"OKPOS 수집 시작 (period={period}, silent={silent})")
     result = okpos_crawler.main(show_dialog=not silent, period=period)
     text = (result or {}).get("text") or "완료"
     error = bool((result or {}).get("error"))
     log(("실패: " if error else "성공: ") + str(text).replace("\n", " / "))
+    # POS 주기(30분)마다 호출되지만, 슬롯당 1회만 실제 API/시트 갱신
+    run_weather_once_(config, force=False)
     return 1 if error else 0
 
 
@@ -109,6 +157,7 @@ def run_daemon(config: dict) -> int:
                 run_once(config, silent=True)
             else:
                 log("영업시간 외 — 대기")
+                run_weather_once_(config, force=False)
         except Exception as exc:
             log(f"예외: {exc}")
         time.sleep(interval * 60)
@@ -120,15 +169,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--daemon", action="store_true", help="백그라운드 반복")
     parser.add_argument("--silent", action="store_true", help="안내 창 없이 실행")
     parser.add_argument("--manual", action="store_true", help="수동 실행(안내 창 표시)")
+    parser.add_argument("--weather-only", action="store_true", help="날씨만 강제 1회")
     args = parser.parse_args(argv)
 
     try:
         config = load_config()
     except Exception as exc:
-        if not args.silent:
+        if not args.silent and not args.weather_only:
             okpos_crawler.show_message(str(exc), error=True)
         log(str(exc))
         return 2
+
+    if args.weather_only:
+        return run_once(config, silent=True, weather_only=True)
 
     if args.daemon:
         return run_daemon(config)
@@ -136,7 +189,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.manual:
         silent = False
     if args.once or args.manual or not args.daemon:
-        # 기본(바로가기): 수동 한 번, 안내 창 있음
         if not args.once and not args.manual and not args.silent:
             silent = False
         return run_once(config, silent=silent)

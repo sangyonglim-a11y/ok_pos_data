@@ -182,7 +182,7 @@ def load_stock(category=""):
     for row in values[1:]:
         if sheet_jobs.text_month(row[0] if row else "") != month:
             continue
-        item_category = cell(row, 13)
+        item_category = cell(row, 14)  # O 구분
         if category and item_category != category:
             continue
         rows.append({
@@ -191,8 +191,8 @@ def load_stock(category=""):
             "opening": cell(row, 4),
             "incoming": cell(row, 5),
             "used": cell(row, 6),
-            "stock": cell(row, 8),
-            "display": cell(row, 10) or cell(row, 8),
+            "stock": cell(row, 9),  # J 현재고
+            "display": cell(row, 12) or cell(row, 9),  # M 직관적수량
             "category": item_category,
         })
     rows.sort(key=lambda item: (item["category"], item["name"], item["code"]))

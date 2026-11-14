@@ -900,7 +900,11 @@ class LiveStockWindow(tk.Toplevel):
         else:
             item["adjustment"] = value
         item["stock"] = sheet_jobs.live_stock_level(
-            item["opening"], item["incoming"], item["used"], item["adjustment"],
+            item["opening"],
+            item["incoming"],
+            item["used"],
+            item.get("adjustmentIn", 0) or 0,
+            item.get("adjustment", 0) or 0,
         )
         self.saving = True
         self.draw()

@@ -26,11 +26,14 @@ build/
 dist/
 installer/output/
 매장배포_USB/
+매장pc배포파일/
 *.exe
 *.log
 
 # local data
 pos_excel_data/
+pos_sync_state.json
+store_deploy_USB/
 명세서/
 *.xls
 *.xlsx
@@ -45,8 +48,12 @@ web/vercel-env-*.b64.txt
 web/vercel-env-*.min.json
 web/.env.local
 
+# clasp local
+webapp/_ocr_pull/
+
 # os / ide
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+.cursor/

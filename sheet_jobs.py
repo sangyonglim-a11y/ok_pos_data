@@ -24,13 +24,13 @@ def _read_local_config():
         path = root / "config.json"
         if path.is_file():
             try:
-                return json.loads(path.read_text(encoding="utf-8"))
+                return json.loads(path.read_text(encoding="utf-8-sig"))
             except Exception:
                 return {}
         path = root / "agent" / "config.json"
         if path.is_file():
             try:
-                return json.loads(path.read_text(encoding="utf-8"))
+                return json.loads(path.read_text(encoding="utf-8-sig"))
             except Exception:
                 return {}
     return {}
@@ -96,7 +96,7 @@ def connect():
 
 def service_email():
     try:
-        with open(JSON_FILE, encoding="utf-8") as f:
+        with open(JSON_FILE, encoding="utf-8-sig") as f:
             return json.load(f).get("client_email", "")
     except Exception:
         return ""
@@ -197,6 +197,8 @@ def ask_gemini(image_bytes, mime_type, db_text):
    - 공급대가총액이 이번 품목 합계와 같으면 monthTotal이 아니라 dailyAmount다.
    - paymentAmount: 금일수금, 입금, 결제액. 적혀 있으면 그 숫자. 당월누적에서 다시 빼지 마. 없으면 null.
    금액을 못 찾으면 null.
+6-0. [(주)동의보감농수산 · 사업자 211-86-29450] 품목 totalPrice = 금액(또는 단가×수량) + 줄세액. taxAmount에 줄세액.
+   미수금에 '숫자(전)'과 '숫자(현)'이 있으면 previousCredit=(전), monthTotal=(현). (전)을 monthTotal에 넣지 마.
 7. businessNumber: 거래처(공급자, 명세서를 발행한 쪽)의 사업자등록번호. 하이픈을 유지한 문자열로 모든 품목에 같게 넣어.
    공급받는자 번호는 넣지 마. 없으면 null.
 
@@ -473,25 +475,42 @@ def normalize_item_name(value):
 
 def material_master(spreadsheet):
     sheet = sheet_or_raise(spreadsheet, "원재료관리")
+    values = sheet.get_all_values()
+    headers = values[0] if values else []
+    status_col = -1
+    timing_col = -1
+    for i, h in enumerate(headers):
+        hs = str(h).strip()
+        if hs == "등록구분":
+            status_col = i
+        if hs == "구매시기":
+            timing_col = i
     master = {}
-    for index, row in enumerate(sheet.get_all_values()[1:], start=2):
+    for index, row in enumerate(values[1:], start=2):
         if len(row) < 2:
             continue
         code = str(row[1]).strip()
         name = str(row[0]).strip()
         if not code:
             continue
+        # 등록구분=대표만 키 (레거시 '등록'·빈값+코드 → 대표). 별칭은 아래에서 병합하지 않음(간단 동기화)
+        status = ""
+        if status_col >= 0 and len(row) > status_col:
+            status = str(row[status_col]).strip()
+        if status == "등록":
+            status = "대표"
+        if status in ("별칭", "미등록", "등록제외", "IGNORE", "영구제외"):
+            continue
+        if status and status != "대표":
+            continue
+        if not status:
+            status = "대표"
         aliases = split_aliases(row[6] if len(row) > 6 else "")
         if code in master:
-            info = master[code]
-            if name and name != info["name"] and name not in info["aliases"]:
-                info["aliases"].append(name)
-            for alias in aliases:
-                if alias != info["name"] and alias not in info["aliases"]:
-                    info["aliases"].append(alias)
-            continue
+            continue  # 대표 중복 시 첫 행
         raw_conversion = str(row[3]).strip() if len(row) > 3 else ""
         conversion = as_number(raw_conversion) if raw_conversion else 1
+        timing_raw = row[timing_col] if timing_col >= 0 and len(row) > timing_col else ""
         master[code] = {
             "name": name,
             "spec": str(row[2]).strip() if len(row) > 2 else "",
@@ -499,6 +518,7 @@ def material_master(spreadsheet):
             "stock_unit": str(row[4]).strip() if len(row) > 4 else "",
             "category": str(row[5]).strip() if len(row) > 5 else "",
             "aliases": [alias for alias in aliases if alias != name],
+            "purchase_timing": normalize_purchase_timing(timing_raw),
             "sheet_row": index,
         }
     return master
@@ -750,7 +770,17 @@ def update_receipt_quantities(log):
 
 VENDOR_SHEET = "거래처관리"
 BALANCE_SHEET = "거래처매입누적"
-BALANCE_HEADERS = ["거래처", "거래일자", "영수증합계금액", "수금", "당월누적금액", "검증누계금액", "검증"]
+BALANCE_HEADERS = [
+    "거래처",
+    "거래일자",
+    "영수증합계금액",
+    "수금",
+    "당월누적금액",
+    "검증누계금액",
+    "검증",
+    "영수증위치",
+    "영수증UPTIME",
+]
 
 
 def money_or_none(value):
@@ -781,7 +811,85 @@ def prices_exclude_tax(item):
     return text in {"false", "0", "no", "별도", "미포함"}
 
 
+def is_donguibogam_items_(items):
+    for item in items or []:
+        biz = re.sub(r"\D", "", str(item.get("businessNumber") or item.get("biz") or ""))
+        if biz == "2118629450":
+            return True
+        name = str(item.get("vendor") or "") + str(item.get("originalName") or "")
+        if "동의보감" in name:
+            return True
+    return False
+
+
+def apply_donguibogam_rules(items):
+    """동의보감: 총매입=단가(금액)+세액, 당월누적=미수금(현)."""
+    if not items or not is_donguibogam_items_(items):
+        return False
+    changed = False
+    line_sum = 0.0
+    for item in items:
+        tax = money_or_none(item.get("taxAmount"))
+        qty = as_number(item.get("originalQty") if item.get("originalQty") not in (None, "") else item.get("qty"))
+        if not qty:
+            qty = 1.0
+        unit = money_or_none(item.get("unitPrice"))
+        tot = money_or_none(item.get("totalPrice"))
+        base = None
+        if unit is not None:
+            base = tidy_number(as_number(unit) * qty)
+        if tot is not None:
+            base = tot
+        if base is None:
+            continue
+        if tax is not None and abs(as_number(tax)) > 0:
+            unit_base = tidy_number(as_number(unit) * qty) if unit is not None else None
+            already = (
+                unit_base is not None
+                and tot is not None
+                and abs(as_number(tot) - tidy_number(as_number(unit_base) + as_number(tax))) <= 1
+            )
+            if not already:
+                supply = unit_base if unit_base is not None else base
+                if tot is not None and unit_base is not None and abs(as_number(tot) - as_number(unit_base)) > 1:
+                    supply = tot
+                inclusive = tidy_number(as_number(supply) + as_number(tax))
+                item["totalPrice"] = inclusive
+                item["unitPrice"] = tidy_number(as_number(inclusive) / qty)
+                item["pricesIncludeTax"] = True
+                changed = True
+        line_sum += as_number(item.get("totalPrice"))
+    line_sum = tidy_number(line_sum)
+    first = items[0]
+    prev = money_or_none(first.get("previousCredit"))
+    if prev is None:
+        prev = money_or_none(first.get("previousReceivable") or first.get("outstandingPrevious"))
+    cur = money_or_none(first.get("currentReceivable") or first.get("outstandingCurrent"))
+    month = money_or_none(first.get("monthTotal"))
+    if cur is not None:
+        for item in items:
+            item["monthTotal"] = cur
+            item["accumulatedAmount"] = cur
+        changed = True
+    elif prev is not None and line_sum > 0 and (month is None or abs(as_number(month) - as_number(prev)) < 1):
+        expect = tidy_number(as_number(prev) + as_number(line_sum))
+        for item in items:
+            item["monthTotal"] = expect
+            item["accumulatedAmount"] = expect
+            if prev is not None:
+                item["previousCredit"] = prev
+        changed = True
+    if line_sum > 0:
+        for item in items:
+            item["dailyAmount"] = line_sum
+        changed = True
+    return changed
+
+
 def apply_vat_inclusive(items):
+    # 동의보감은 줄세액 규칙 우선
+    if apply_donguibogam_rules(items):
+        return True
     # 공급가액과 세액이 분리된 명세서만 품목 금액을 부가세 포함으로 맞춘다.
     # 품목 금액이 이미 합계와 같으면 세액을 다시 더하지 않는다.
     tax = None
@@ -931,11 +1039,16 @@ def order_same_day(buckets):
 
 
 def build_balance_rows(receipt_rows, vendor_rows, saved_amounts=None):
-    allowed = {
-        row["key"]: row["vendor"]
-        for row in vendor_rows
-        if str(row.get("check", "")).strip().upper() == "Y"
-    }
+    """검증대상 Y 거래처를 사업자번호(우선)·거래처명(보조)으로 원재료입고와 매칭."""
+    allowed = {}
+    allowed_by_biz = {}
+    for row in vendor_rows:
+        if str(row.get("check", "")).strip().upper() != "Y":
+            continue
+        allowed[row["key"]] = row["vendor"]
+        biz_digits = re.sub(r"\D", "", str(row.get("biz") or ""))
+        if len(biz_digits) == 10:
+            allowed_by_biz[biz_digits] = row["vendor"]
     grouped = {}
     for row in receipt_rows:
         if not row or not any(str(cell).strip() for cell in row):
@@ -947,10 +1060,17 @@ def build_balance_rows(receipt_rows, vendor_rows, saved_amounts=None):
         status = str(receipt_cell(row, RECEIPT_STATUS) or "").strip()
         if not daily_known and len(biz_digits) != 10 and status not in {"검수대기", "반영완료"}:
             continue
-        key = normalize_vendor(receipt_cell(row, RECEIPT_VENDOR))
+        master_name = None
+        if len(biz_digits) == 10 and biz_digits in allowed_by_biz:
+            master_name = allowed_by_biz[biz_digits]
+        else:
+            name_key = normalize_vendor(receipt_cell(row, RECEIPT_VENDOR))
+            if name_key in allowed:
+                master_name = allowed[name_key]
         date = normalize_receipt_date(receipt_cell(row, RECEIPT_DATE))
-        if key not in allowed or not date:
+        if not master_name or not date:
             continue
+        key = normalize_vendor(master_name)
         daily = money_or_none(receipt_cell(row, RECEIPT_DAILY))
         group_key = (key, date, daily)
         bucket = grouped.get(group_key)
@@ -1369,7 +1489,7 @@ def process_receipts_ocr(log):
                     False,
                     "검수대기",
                     "",
-                    "" if payment is None else payment,
+                    "",  # S열(구 중간결제/수금): 미사용. 중간결제는 거래처매입누적 사용자 입력만
                 ])
             if not rows:
                 raise RuntimeError("추출된 품목이 없습니다.")
@@ -1432,19 +1552,177 @@ def process_receipts_ocr(log):
     return True, "영수증 OCR에 실패했습니다.\n" + detail
 
 
+# 원재료_실시간재고 컬럼 (0-indexed)
+# A기준월 B업데이트 C코드 D명 E이월 F입고 G사용 H조정입고 I조정로스
+# J안전재고 K현재고 L부족수량 M재고단위 N직관 O입고규격 P구분
+INV_OPENING, INV_INCOMING, INV_USED = 4, 5, 6
+INV_ADJ_IN, INV_ADJ_LOSS, INV_SAFETY = 7, 8, 9
+INV_STOCK, INV_SHORTAGE, INV_UNIT = 10, 11, 12
+INV_DISPLAY, INV_SPEC, INV_CATEGORY = 13, 14, 15
+INV_USED_TODAY = 16
+INV_AVG_USED = 17
+
+
+def normalize_purchase_timing(raw):
+    t = str(raw or "").strip().lower().replace(" ", "")
+    if t == "pos":
+        return "pos"
+    if t in ("평균주기", "구매주기", "평균", "주기"):
+        return "평균주기"
+    return ""
+
+
+def add_days_iso(iso, days):
+    try:
+        base = datetime.strptime(str(iso)[:10], "%Y-%m-%d")
+    except ValueError:
+        return ""
+    return (base + timedelta(days=days)).strftime("%Y-%m-%d")
+
+
+def days_between_iso(a, b):
+    try:
+        da = datetime.strptime(str(a)[:10], "%Y-%m-%d")
+        db = datetime.strptime(str(b)[:10], "%Y-%m-%d")
+    except ValueError:
+        return 0
+    return max(1, (db - da).days)
+
+
+def last_day_of_month_iso(ym):
+    try:
+        y, m = str(ym).split("-")[:2]
+        y, m = int(y), int(m)
+        if m == 12:
+            nxt = datetime(y + 1, 1, 1)
+        else:
+            nxt = datetime(y, m + 1, 1)
+        return (nxt - timedelta(days=1)).strftime("%Y-%m-%d")
+    except Exception:
+        return ""
+
+
+def build_avg_cycle_stats(staging_rows, master, today_iso):
+    """평균주기 코드 → {avg_daily, last_date, orders}."""
+    cutoff = add_days_iso(today_iso, -365) or "2000-01-01"
+    by_code = {}
+    for row in staging_rows[1:]:
+        if len(row) <= RECEIPT_STATUS or str(receipt_cell(row, RECEIPT_STATUS)).strip() != "반영완료":
+            continue
+        code = str(receipt_cell(row, RECEIPT_CODE)).strip()
+        if not code:
+            continue
+        info = master.get(code) or {}
+        if info.get("purchase_timing") != "평균주기":
+            continue
+        day = str(normalize_receipt_date(receipt_cell(row, RECEIPT_DATE)) or "")[:10]
+        if len(day) < 10 or day < cutoff:
+            continue
+        qty = as_number(receipt_cell(row, RECEIPT_FINAL))
+        if qty <= 0:
+            continue
+        by_code.setdefault(code, {})
+        by_code[code][day] = by_code[code].get(day, 0) + qty
+    out = {}
+    for code, day_map in by_code.items():
+        days = sorted(day_map.keys())
+        if not days:
+            continue
+        qtys = [day_map[d] for d in days]
+        avg_qty = sum(qtys) / len(qtys)
+        avg_cycle = 0.0
+        if len(days) >= 2:
+            gaps = [days_between_iso(days[i - 1], days[i]) for i in range(1, len(days))]
+            avg_cycle = sum(gaps) / len(gaps)
+        avg_daily = round(avg_qty / avg_cycle, 6) if avg_cycle > 0 else 0.0
+        out[code] = {"avg_daily": avg_daily, "last_date": days[-1], "orders": len(days)}
+    return out
+
+
+def cycle_usage_for_month(stat, open_month, today_text):
+    avg_daily = float(stat.get("avg_daily") or 0)
+    if avg_daily <= 0:
+        return 0.0, 0.0
+    month_start = f"{open_month}-01"
+    month_end = today_text if text_month(today_text) == open_month else last_day_of_month_iso(open_month) or today_text
+    last_date = str(stat.get("last_date") or "")[:10]
+    start = month_start
+    if last_date and last_date >= month_start:
+        start = add_days_iso(last_date, 1)
+    if not start or start > month_end:
+        return 0.0, 0.0
+    try:
+        da = datetime.strptime(start, "%Y-%m-%d")
+        db = datetime.strptime(month_end, "%Y-%m-%d")
+        days = (db - da).days + 1
+    except ValueError:
+        days = 0
+    if days < 0:
+        days = 0
+    used = round(avg_daily * days, 6)
+    used_today = 0.0
+    if text_month(today_text) == open_month and (not last_date or today_text > last_date):
+        used_today = round(avg_daily, 6)
+    return used, used_today
+
+
+def calc_current_stock(opening, incoming, used, adj_in=0, adj_loss=0):
+    """현재고 = 이월 + 입고 - 사용 + 조정입고 - 조정로스 (수식 없이 값)."""
+    return tidy_number(
+        as_number(opening) + as_number(incoming) - as_number(used)
+        + as_number(adj_in) - as_number(adj_loss)
+    )
+
+
+def pack_size_from_spec(spec):
+    text = str(spec or "")
+    if "/" in text:
+        after = "/".join(text.split("/")[1:])
+        match = re.search(r"\d+(?:\.\d+)?", after)
+        return float(match.group(0)) if match else 0.0
+    match = re.search(r"\d+(?:\.\d+)?", text)
+    return float(match.group(0)) if match else 0.0
+
+
+def pack_prefix_from_spec(spec):
+    text = str(spec or "")
+    if "/" not in text:
+        return ""
+    return re.sub(r"\s+", " ", text.split("/", 1)[0]).strip()
+
+
+def round_qty_1(value):
+    """직관적수량용 소수 1자리 반올림 (3.87 → 3.9)"""
+    return round(as_number(value) * 10) / 10
+
+
+def calc_display_qty(stock, unit, spec):
+    """직관적 수량 텍스트. 잔여 kg 등은 소수 1자리. 예: 13Box 3.9kg"""
+    qty = as_number(stock)
+    unit_text = str(unit or "").strip()
+    size = pack_size_from_spec(spec)
+    if not size or size <= 0:
+        return f"{round_qty_1(qty)}{unit_text}"
+    abs_qty = abs(qty)
+    boxes = int(abs_qty // size)
+    if boxes <= 0:
+        return f"{round_qty_1(qty)}{unit_text}"
+    remain = round_qty_1(abs_qty % size)
+    prefix = pack_prefix_from_spec(spec)
+    sign = "-" if qty < 0 else ""
+    out = f"{sign}{boxes}{prefix}"
+    if remain:
+        out += f" {remain}{unit_text}"
+    return out
+
+
 def stock_formula(row):
-    # 기초·입고·사용량은 재고단위다. 재고수환산은 최종반영수량에 이미 곱해져 있다.
-    return f'=(F{row}+IF(E{row}="",0,E{row}))-G{row}+H{row}'
+    # 하위 호환: 더 이상 시트에 쓰지 않음. 값 계산은 calc_current_stock 사용.
+    return calc_current_stock(0, 0, 0, 0, 0)
 
 
-def conversion_expr(row):
-    return f"IFERROR(INDEX('원재료관리'!D:D,MATCH(C{row},'원재료관리'!B:B,0)),1)"
-
-
-def pack_size_expr(row):
-    # 입고단위의 '/' 뒤 숫자(Box / 8 팩 → 8). 숫자가 없으면 재고수환산.
-    extracted = f'IFERROR(VALUE(REGEXEXTRACT(L{row},"/\\s*(\\d+(?:\\.\\d+)?)")),{conversion_expr(row)})'
-    return extracted
+def display_formula(row):
+    return ""
 
 
 def text_month(value):
@@ -1568,30 +1846,19 @@ def ensure_title(worksheet, column, title):
         worksheet.update_cell(1, column, title)
 
 
-def display_formula(row):
-    size = pack_size_expr(row)
-    boxes = f"INT(ABS(I{row})/({size}))"
-    remain = f"ROUND(MOD(ABS(I{row}),({size})),1)"
-    label = f'TRIM(INDEX(SPLIT(L{row},"/"),1))'
-    sign = f'IF(I{row}<0,"-","")'
-    simple = f"ROUND(I{row},1)&M{row}"
-    return (
-        f'=IF(OR(N{row}="고기",({size})<=1,{boxes}=0),{simple},'
-        f'{sign}&{boxes}&{label}&IF({remain}=0,""," "&{remain}&M{row}))'
-    )
-
-
 def batch_cells(worksheet, cells, raw):
     payload = [{"range": cell, "values": [[value]]} for cell, value in cells]
     for index in range(0, len(payload), 80):
         worksheet.batch_update(payload[index:index + 80], raw=raw)
 
 
-def live_stock_level(opening, incoming, used, adjustment):
-    # 현재고 = 기초 + 이번달입고 - 이번달사용량 + 조정
-    return tidy_number(
-        as_number(opening) + as_number(incoming) - as_number(used) + as_number(adjustment)
-    )
+def live_stock_level(opening, incoming, used, adjustment=0, adj_loss=None):
+    # 현재고 = 이월 + 입고 - 사용 + 조정입고 - 조정로스
+    if adj_loss is None:
+        # 구 UI: adjustment 한 칸(마이너스=로스) → 조정입고 0, 조정로스 = -min(0, adj) 등으로 안 쓰고
+        # 양수 조정을 입고, 음수를 로스로 해석하지 않고 net 을 조정입고에 넣던 호환 경로
+        return calc_current_stock(opening, incoming, used, adjustment, 0)
+    return calc_current_stock(opening, incoming, used, adjustment, adj_loss)
 
 
 def below_safety(stock, safety):
@@ -1620,29 +1887,38 @@ def load_live_stock():
         name = str(cell_or_blank(row, 3)).strip()
         if not code and not name:
             continue
-        opening = money_or_none(cell_or_blank(row, 4))
-        incoming = money_or_none(cell_or_blank(row, 5))
-        used = money_or_none(cell_or_blank(row, 6))
-        adjustment = money_or_none(cell_or_blank(row, 7))
-        if adjustment is None:
-            adjustment = 0
-        safety = money_or_none(cell_or_blank(row, 9))
-        stock = money_or_none(cell_or_blank(row, 8))
+        opening = money_or_none(cell_or_blank(row, INV_OPENING))
+        incoming = money_or_none(cell_or_blank(row, INV_INCOMING))
+        used = money_or_none(cell_or_blank(row, INV_USED))
+        adj_in = money_or_none(cell_or_blank(row, INV_ADJ_IN))
+        if adj_in is None:
+            adj_in = 0
+        adj_loss = money_or_none(cell_or_blank(row, INV_ADJ_LOSS))
+        if adj_loss is None:
+            adj_loss = 0
+        safety = money_or_none(cell_or_blank(row, INV_SAFETY))
+        unit = str(cell_or_blank(row, INV_UNIT)).strip()
+        spec = str(cell_or_blank(row, INV_SPEC)).strip()
+        stock = money_or_none(cell_or_blank(row, INV_STOCK))
         if stock is None:
-            stock = live_stock_level(opening, incoming, used, adjustment)
+            stock = calc_current_stock(opening, incoming, used, adj_in, adj_loss)
+        display = str(cell_or_blank(row, INV_DISPLAY)).strip()
+        if not display:
+            display = calc_display_qty(stock, unit, spec)
         rows.append({
             "row": index,
             "code": code,
             "name": name or code,
-            "category": str(cell_or_blank(row, 13)).strip(),
-            "unit": str(cell_or_blank(row, 12)).strip(),
+            "category": str(cell_or_blank(row, INV_CATEGORY)).strip(),
+            "unit": unit,
             "opening": opening,
             "incoming": incoming,
             "used": used,
-            "adjustment": adjustment,
+            "adjustmentIn": adj_in,
+            "adjustment": adj_loss,
             "safety": safety,
             "stock": stock,
-            "display": str(cell_or_blank(row, 10)).strip(),
+            "display": display,
         })
     rows.sort(key=lambda item: (
         0 if below_safety(item["stock"], item["safety"]) else 1,
@@ -1655,15 +1931,37 @@ def load_live_stock():
 
 def save_live_stock_cell(row_number, kind, value):
     row_number = int(row_number)
-    column = {"adjustment": "H", "safety": "J"}[kind]
+    # adjustment = 조정로스(I), adjustmentIn = 조정입고(H), safety = 안전재고(J)
+    column = {
+        "adjustment": "I",
+        "adjustmentLoss": "I",
+        "adjustmentIn": "H",
+        "safety": "J",
+    }[kind]
     spreadsheet = open_sheet()
     inventory = sheet_or_raise(spreadsheet, "원재료_실시간재고")
     written = "" if value is None else value
     batch_cells(inventory, [(f"{column}{row_number}", written)], raw=False)
-    shown = inventory.get(f"I{row_number}:K{row_number}")
-    flat = shown[0] if shown else []
-    stock = money_or_none(flat[0] if flat else "")
-    display = str(flat[2]).strip() if len(flat) > 2 else ""
+    values = inventory.get(f"E{row_number}:O{row_number}")
+    flat = values[0] if values else []
+    # E F G H I J K L M N O → 이월~입고규격 (J안전 K현재고 L부족 …)
+    opening = money_or_none(flat[0] if len(flat) > 0 else "")
+    incoming = money_or_none(flat[1] if len(flat) > 1 else "")
+    used = money_or_none(flat[2] if len(flat) > 2 else "")
+    adj_in = money_or_none(flat[3] if len(flat) > 3 else "") or 0
+    adj_loss = money_or_none(flat[4] if len(flat) > 4 else "") or 0
+    safety = flat[5] if len(flat) > 5 else ""
+    unit = str(flat[8] if len(flat) > 8 else "").strip()
+    spec = str(flat[10] if len(flat) > 10 else "").strip()
+    stock = calc_current_stock(opening, incoming, used, adj_in, adj_loss)
+    display = calc_display_qty(stock, unit, spec)
+    shortage = stock_shortage(stock, safety)
+    shortage_cell = "" if shortage is None else shortage
+    batch_cells(inventory, [
+        (f"K{row_number}", stock),
+        (f"L{row_number}", shortage_cell),
+        (f"N{row_number}", display),
+    ], raw=False)
     return stock, display
 
 
@@ -1685,17 +1983,44 @@ def calculate_inventory(log):
     if staging is not None:
         ensure_title(staging, RECEIPT_POSTED + 1, "반영월")
     log(f"기준월 {open_month} 입고와 판매만 합산합니다.")
+    master = material_master(spreadsheet)
+    today_text = now_text()[:10]
+    staging_rows = staging.get_all_values() if staging is not None else []
+    cycle_stats = build_avg_cycle_stats(staging_rows, master, today_text)
 
     sales_qty = {}
+    sales_qty_today = {}
     for row in sales.get_all_values()[1:]:
-        if len(row) < 3 or text_month(row[0]) != open_month:
+        if len(row) < 3:
             continue
-        name = str(row[1]).strip()
-        qty = as_number(row[2])
-        if name and qty > 0:
-            sales_qty[name] = sales_qty.get(name, 0) + qty
+        a0 = str(row[0]).strip()
+        if (
+            len(row) >= 4
+            and len(a0) == 10
+            and a0[4] == "-"
+            and a0[7] == "-"
+            and str(row[2]).strip()
+            and str(row[3]).strip() != ""
+        ):
+            day = a0
+            name = str(row[2]).strip()
+            qty = as_number(row[3])
+        else:
+            day = a0
+            name = str(row[1]).strip()
+            qty = as_number(row[2])
+        day10 = str(day).strip()[:10]
+        if text_month(day10) != open_month:
+            continue
+        if not (name and qty > 0):
+            continue
+        sales_qty[name] = sales_qty.get(name, 0) + qty
+        if day10 == today_text:
+            sales_qty_today[name] = sales_qty_today.get(name, 0) + qty
 
     usage = {}
+    usage_today = {}
+    avg_used = {}
     names = {}
     for row in recipe.get_all_values()[1:]:
         if len(row) < 6:
@@ -1706,24 +2031,39 @@ def calculate_inventory(log):
         amount = as_number(row[5])
         if not code or code in ("undefined", "nan"):
             continue
+        info = master.get(code) or {}
+        if info.get("purchase_timing") != "pos":
+            continue
         names[code] = ing_name
         usage[code] = usage.get(code, 0) + (sales_qty.get(menu, 0) * amount)
+        usage_today[code] = usage_today.get(code, 0) + (sales_qty_today.get(menu, 0) * amount)
 
     received = {}
     receipt_names = {}
-    if staging is not None and len(staging.get_all_values()) > 1:
-        for row in staging.get_all_values()[1:]:
-            if len(row) <= RECEIPT_STATUS or str(receipt_cell(row, RECEIPT_STATUS)).strip() != "반영완료":
-                continue
-            if receipt_month(row) != open_month:
-                continue
-            code = str(receipt_cell(row, RECEIPT_CODE)).strip()
-            if not code:
-                continue
-            received[code] = received.get(code, 0) + as_number(receipt_cell(row, RECEIPT_FINAL))
-            official = str(receipt_cell(row, RECEIPT_OFFICIAL)).strip()
-            if official:
-                receipt_names[code] = official
+    for row in staging_rows[1:]:
+        if len(row) <= RECEIPT_STATUS or str(receipt_cell(row, RECEIPT_STATUS)).strip() != "반영완료":
+            continue
+        if receipt_month(row) != open_month:
+            continue
+        code = str(receipt_cell(row, RECEIPT_CODE)).strip()
+        if not code or code not in master:
+            continue
+        timing = master[code].get("purchase_timing")
+        if timing not in ("pos", "평균주기"):
+            continue
+        received[code] = received.get(code, 0) + as_number(receipt_cell(row, RECEIPT_FINAL))
+        official = str(receipt_cell(row, RECEIPT_OFFICIAL)).strip()
+        if official:
+            receipt_names[code] = official
+
+    for code, stat in cycle_stats.items():
+        if master.get(code, {}).get("purchase_timing") != "평균주기":
+            continue
+        used, used_today = cycle_usage_for_month(stat, open_month, today_text)
+        usage[code] = used
+        usage_today[code] = used_today
+        avg_used[code] = stat.get("avg_daily") or 0
+        names.setdefault(code, master[code].get("name") or code)
 
     row_of = {}
     for index, row in enumerate(values[1:], start=2):
@@ -1736,65 +2076,100 @@ def calculate_inventory(log):
     updates = []
     new_rows = []
     migrated = 0
-    tracked = set(names) | set(received)
+    tracked = set(names) | set(received) | set(cycle_stats)
+    for code in list(row_of):
+        timing = (master.get(code) or {}).get("purchase_timing")
+        if timing in ("pos", "평균주기"):
+            tracked.add(code)
+    ensure_title(inventory, INV_USED_TODAY + 1, "당일사용량")
+    ensure_title(inventory, INV_AVG_USED + 1, "평균사용량")
+    pos_n = 0
+    cycle_n = 0
     for code in tracked:
-        name = names.get(code) or receipt_names.get(code) or code
+        info = master.get(code)
+        if not info:
+            continue
+        timing = info.get("purchase_timing")
+        if timing not in ("pos", "평균주기"):
+            continue
+        if timing == "평균주기":
+            cycle_n += 1
+        else:
+            pos_n += 1
+        name = names.get(code) or receipt_names.get(code) or info.get("name") or code
         used = usage.get(code, 0)
+        used_today = usage_today.get(code, 0)
+        avg_val = avg_used.get(code, "") if timing == "평균주기" else ""
         month_received = received.get(code, 0)
         if code in row_of:
             row = row_of[code]
             current = values[row - 1]
-            opening_cell = current[4] if len(current) > 4 else ""
+            opening_cell = cell_or_blank(current, INV_OPENING)
+            adj_in = as_number(cell_or_blank(current, INV_ADJ_IN)) if str(cell_or_blank(current, INV_ADJ_IN)).strip() != "" else 0
+            adj_loss = as_number(cell_or_blank(current, INV_ADJ_LOSS)) if str(cell_or_blank(current, INV_ADJ_LOSS)).strip() != "" else 0
+            unit = str(cell_or_blank(current, INV_UNIT)).strip() or info.get("stock_unit") or ""
+            spec = str(cell_or_blank(current, INV_SPEC)).strip() or info.get("spec") or ""
+            safety = cell_or_blank(current, INV_SAFETY)
+            category = cell_or_blank(current, INV_CATEGORY) or info.get("category") or ""
+            if str(opening_cell).strip() == "":
+                stock_now = as_number(cell_or_blank(current, INV_STOCK))
+                opening = stock_now - month_received + used - adj_in + adj_loss
+                if abs(opening) < 1e-9:
+                    opening = 0
+                opening = round(opening, 6)
+                migrated += 1
+            else:
+                opening = as_number(opening_cell)
+            stock = calc_current_stock(opening, month_received, used, adj_in, adj_loss)
+            display = calc_display_qty(stock, unit, spec)
+            shortage = stock_shortage(stock, safety)
+            shortage_cell = "" if shortage is None else shortage
             updates.extend([
                 (f"B{row}", timestamp),
                 (f"D{row}", name),
+                (f"E{row}", opening),
                 (f"F{row}", month_received),
                 (f"G{row}", used),
-                (f"I{row}", stock_formula(row)),
-                (f"K{row}", display_formula(row)),
+                (f"H{row}", adj_in),
+                (f"I{row}", adj_loss),
+                (f"J{row}", safety),
+                (f"K{row}", stock),
+                (f"L{row}", shortage_cell),
+                (f"M{row}", unit),
+                (f"N{row}", display),
+                (f"O{row}", spec),
+                (f"P{row}", category),
+                (f"Q{row}", used_today),
+                (f"R{row}", avg_val),
             ])
-            if str(opening_cell).strip() == "":
-                opening = opening_from_stock(
-                    as_number(current[8] if len(current) > 8 else 0),
-                    as_number(current[7] if len(current) > 7 else 0),
-                    used,
-                    month_received,
-                    1,
-                )
-                updates.append((f"E{row}", opening))
-                migrated += 1
         else:
+            stock = calc_current_stock(0, month_received, used, 0, 0)
+            display = calc_display_qty(stock, "", "")
             new_rows.append([
-                open_month, timestamp, code, name, 0, month_received, used, 0,
-                stock_formula(0), "", display_formula(0),
-                "", "", "",
+                open_month, timestamp, code, name, 0, month_received, used, 0, 0,
+                "", stock, "", "", display, "", "", used_today, avg_val,
             ])
 
     if updates:
-        log(f"기준월 {open_month} 재료 {len(tracked)}개를 갱신합니다.")
+        log(f"기준월 {open_month} 재료 {len(tracked)}개 갱신 (pos {pos_n} · 평균주기 {cycle_n})")
         inventory.format(f"A2:A{max(row_of.values()) if row_of else 2}", {"numberFormat": {"type": "TEXT"}})
         batch_cells(inventory, updates, raw=False)
 
     if new_rows:
-        start = len(inventory.get_all_values()) + 1
-        prepared = []
-        for offset, row in enumerate(new_rows):
-            row_number = start + offset
-            row[8] = stock_formula(row_number)
-            row[10] = display_formula(row_number)
-            prepared.append(row)
         inventory.format(
-            f"A{start}:A{start + len(prepared) - 1}",
+            f"A{len(inventory.get_all_values()) + 1}:A{len(inventory.get_all_values()) + len(new_rows)}",
             {"numberFormat": {"type": "TEXT"}},
         )
-        inventory.append_rows(prepared, value_input_option="USER_ENTERED")
-        log(f"새 원재료 {len(prepared)}개를 추가했습니다.")
+        inventory.append_rows(new_rows, value_input_option="USER_ENTERED")
+        log(f"새 원재료 {len(new_rows)}개를 추가했습니다.")
 
     if migrated:
-        kept = f"비어 있던 기초재고 {migrated}개는 현재 재고가 유지되도록 채웠습니다."
+        kept = f"비어 있던 이월재고 {migrated}개는 현재 재고가 유지되도록 채웠습니다."
     else:
-        kept = "기초재고와 조정은 그대로 두었습니다."
-    return False, f"완료되었습니다.\n기준월 {open_month} 입고와 판매만 반영했습니다.\n{kept}"
+        kept = "이월재고·조정입고·조정로스는 그대로 두었습니다."
+    return False, (
+        f"완료되었습니다.\n기준월 {open_month} · pos {pos_n} · 평균주기 {cycle_n}건 반영.\n{kept}"
+    )
 
 
 def cell_or_blank(row, index):
@@ -1831,10 +2206,34 @@ def monthly_close(log):
     updates = []
     prepared = []
     for code, row in current_rows.items():
-        stock = as_number(cell_or_blank(row, 8))
+        unit = str(cell_or_blank(row, INV_UNIT)).strip()
+        spec = str(cell_or_blank(row, INV_SPEC)).strip()
+        stock_cell = cell_or_blank(row, INV_STOCK)
+        if str(stock_cell).strip() == "":
+            stock = calc_current_stock(
+                cell_or_blank(row, INV_OPENING),
+                cell_or_blank(row, INV_INCOMING),
+                cell_or_blank(row, INV_USED),
+                cell_or_blank(row, INV_ADJ_IN),
+                cell_or_blank(row, INV_ADJ_LOSS),
+            )
+        else:
+            stock = as_number(stock_cell)
         opening = 0 if abs(stock) < 1e-9 else round(stock, 6)
+        next_stock = calc_current_stock(opening, 0, 0, 0, 0)
+        next_display = calc_display_qty(next_stock, unit, spec)
         if code in next_rows:
             row_number = next_rows[code]
+            existing = values[row_number - 1]
+            keep_unit = str(cell_or_blank(existing, INV_UNIT)).strip() or unit
+            keep_spec = str(cell_or_blank(existing, INV_SPEC)).strip() or spec
+            keep_cat = cell_or_blank(existing, INV_CATEGORY) or cell_or_blank(row, INV_CATEGORY)
+            keep_safety = cell_or_blank(existing, INV_SAFETY)
+            if str(keep_safety).strip() == "" and str(cell_or_blank(row, INV_SAFETY)).strip() != "":
+                keep_safety = cell_or_blank(row, INV_SAFETY)
+            next_display = calc_display_qty(next_stock, keep_unit, keep_spec)
+            keep_shortage = stock_shortage(next_stock, keep_safety)
+            keep_shortage_cell = "" if keep_shortage is None else keep_shortage
             updates.extend([
                 (f"B{row_number}", timestamp),
                 (f"D{row_number}", cell_or_blank(row, 3)),
@@ -1842,24 +2241,31 @@ def monthly_close(log):
                 (f"F{row_number}", 0),
                 (f"G{row_number}", 0),
                 (f"H{row_number}", 0),
-                (f"I{row_number}", stock_formula(row_number)),
-                (f"K{row_number}", display_formula(row_number)),
+                (f"I{row_number}", 0),
+                (f"J{row_number}", keep_safety),
+                (f"K{row_number}", next_stock),
+                (f"L{row_number}", keep_shortage_cell),
+                (f"M{row_number}", keep_unit),
+                (f"N{row_number}", next_display),
+                (f"O{row_number}", keep_spec),
+                (f"P{row_number}", keep_cat),
+                (f"Q{row_number}", 0),
+                (f"R{row_number}", ""),
             ])
             continue
+        next_safety = cell_or_blank(row, INV_SAFETY)
+        next_shortage = stock_shortage(next_stock, next_safety)
+        next_shortage_cell = "" if next_shortage is None else next_shortage
         prepared.append([
-            following, timestamp, code, cell_or_blank(row, 3), opening, 0, 0, 0,
-            stock_formula(0), cell_or_blank(row, 9), display_formula(0),
-            cell_or_blank(row, 11), cell_or_blank(row, 12), cell_or_blank(row, 13),
+            following, timestamp, code, cell_or_blank(row, 3), opening, 0, 0, 0, 0,
+            next_safety, next_stock, next_shortage_cell, unit, next_display, spec,
+            cell_or_blank(row, INV_CATEGORY), 0, "",
         ])
 
     if updates:
         batch_cells(inventory, updates, raw=False)
     if prepared:
         start = len(inventory.get_all_values()) + 1
-        for offset, row in enumerate(prepared):
-            row_number = start + offset
-            row[8] = stock_formula(row_number)
-            row[10] = display_formula(row_number)
         inventory.format(
             f"A{start}:A{start + len(prepared) - 1}",
             {"numberFormat": {"type": "TEXT"}},
@@ -1868,6 +2274,6 @@ def monthly_close(log):
 
     return False, (
         f"완료되었습니다.\n{current} 행은 그대로 두었습니다.\n"
-        f"남은 재고를 {following} 기초재고로 같은 시트에 {len(current_rows)}개 만들었습니다.\n"
-        f"다음 달 입고, 사용량, 조정은 0입니다."
+        f"남은 재고를 {following} 이월재고로 같은 시트에 {len(current_rows)}개 만들었습니다.\n"
+        f"다음 달 입고, 사용량, 조정입고·로스는 0입니다."
     )

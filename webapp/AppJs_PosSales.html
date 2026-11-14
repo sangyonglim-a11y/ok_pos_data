@@ -1,0 +1,651 @@
+<script>
+/* POS 판매내역 + 트렌드 대시보드 (AppJs_PosSales.html 로 빌드) */
+(function (global) {
+  let posTrendChart_ = null;
+
+  const CAT_ORDER = ["고기류", "식사류", "주류", "비품/기타"];
+  const CAT_COLORS = {
+    고기류: "#163028",
+    식사류: "#c46a1b",
+    주류: "#1d4f91",
+    "비품/기타": "#6b7280",
+  };
+  const LINE_PALETTE = ["#163028", "#1d4f91", "#c46a1b", "#0f766e", "#7c3aed", "#b91c1c"];
+
+  function isoDate_(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return y + "-" + m + "-" + day;
+  }
+
+  function defaultRange_() {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - 29);
+    return { start: isoDate_(start), end: isoDate_(end) };
+  }
+
+  function applyMonthRangeIfNeeded_() {
+    const m = String(state.selectedMonth || "");
+    if (!/^\d{4}-\d{2}$/.test(m)) return false;
+    const parts = m.split("-");
+    const y = Number(parts[0]);
+    const mo = Number(parts[1]);
+    const last = new Date(y, mo, 0);
+    const dd = String(last.getDate()).padStart(2, "0");
+    state.posStart = m + "-01";
+    state.posEnd = m + "-" + dd;
+    return true;
+  }
+
+  function ensureState_() {
+    if (!state.posStart || !state.posEnd) {
+      if (!applyMonthRangeIfNeeded_()) {
+        const r = defaultRange_();
+        if (!state.posStart) state.posStart = r.start;
+        if (!state.posEnd) state.posEnd = r.end;
+      }
+    }
+    if (state.posKeyword == null) state.posKeyword = "";
+    if (state.posSearchText == null) state.posSearchText = state.posKeyword || "";
+    if (!Array.isArray(state.posRows)) state.posRows = [];
+    if (!Array.isArray(state.posWeather)) state.posWeather = [];
+    if (!state.posViewType) state.posViewType = "category";
+    if (!state.posTimeFilter) state.posTimeFilter = "all";
+  }
+
+  function qtyText_(v) {
+    if (v === null || v === undefined || v === "") return "—";
+    const n = Number(v);
+    if (!Number.isFinite(n)) return String(v);
+    return n.toLocaleString("ko-KR");
+  }
+
+  /** 화면용 판매시간: 12시 또는 구형 MM-DD HH:MM */
+  function formatSoldAtShort_(raw) {
+    const s = String(raw || "").trim();
+    if (!s) return "—";
+    const hourOnly = s.match(/^(\d{1,2})\s*시$/);
+    if (hourOnly) return Number(hourOnly[1]) + "시";
+    const m = s.match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})/);
+    if (m) {
+      const hh = String(m[4]).padStart(2, "0");
+      return m[2] + "-" + m[3] + " " + hh + ":" + m[5];
+    }
+    const dOnly = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (dOnly) return dOnly[2] + "-" + dOnly[3];
+    return s.length > 14 ? s.slice(5, 16) : s;
+  }
+
+  function formatSaleDateShort_(raw) {
+    const s = String(raw || "").trim();
+    const m = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return m[2] + "-" + m[3];
+    return s || "—";
+  }
+
+  function qtyNum_(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  /** 상품명 → 고기류 | 식사류 | 주류 | 비품/기타 */
+  function categorizePosName_(name) {
+    const s = String(name || "");
+    if (/주류|맥주|소주|후레쉬|카스|참이슬|처음처럼|하이볼|청하|막걸리|와인|위스키/.test(s)) {
+      return "주류";
+    }
+    if (/국밥|내장탕|순대|찌개|전골|라면|우동|밥|세트|도시락|냉면|비빔/.test(s)) {
+      return "식사류";
+    }
+    if (/황제|살치|껍데기|목살|삼겹|갈비|차돌|우삼겹|이베리코|한우|갈매기|등심|항정|잡육|막창|대창|곱창|목살|돼지|소고기/.test(s)) {
+      return "고기류";
+    }
+    return "비품/기타";
+  }
+
+  function soldAtHour_(row) {
+    if (row && row.hour != null && Number.isFinite(Number(row.hour))) return Number(row.hour);
+    const raw = String((row && (row.soldAt || row.판매시간 || row.판매일시 || row.date || row.saleDate)) || "").trim();
+    const hourLabel = raw.match(/^(\d{1,2})\s*시$/);
+    if (hourLabel) return Number(hourLabel[1]);
+    const hourEmbed = raw.match(/(\d{1,2})\s*시/);
+    if (hourEmbed) return Number(hourEmbed[1]);
+    const m = raw.match(/(\d{1,2}):(\d{2})(?::\d{2})?/);
+    if (!m) return null;
+    const h = Number(m[1]);
+    const mi = Number(m[2]);
+    if (!Number.isFinite(h)) return null;
+    return h + (Number.isFinite(mi) ? mi / 60 : 0);
+  }
+
+  /** timeFilter: all | lunch | dinner */
+  function filterByTime_(rows, timeFilter) {
+    const tf = timeFilter || "all";
+    if (tf === "all") return rows.slice();
+    return (rows || []).filter((r) => {
+      const hour = soldAtHour_(r);
+      if (hour == null) return false;
+      if (tf === "lunch") return hour <= 15;
+      if (tf === "dinner") return hour > 15;
+      return true;
+    });
+  }
+
+  function rowDate_(r) {
+    const d = String(r.saleDate || r.date || r.판매일자 || "").slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+    const s = String((r && (r.soldAt || r.판매일시)) || "");
+    const m = s.match(/(\d{4}-\d{2}-\d{2})/);
+    return m ? m[1] : d;
+  }
+
+  function rowName_(r) {
+    return String(r.name || r.상품명 || "").trim() || "(상품명 없음)";
+  }
+
+  /** 그래프 점 클릭 → 아래 표에서 해당 일자(·시리즈) 행으로 스크롤·강조 */
+  function scrollPosTableTo_(dateIso, seriesName) {
+    const dateKey = String(dateIso || "").slice(0, 10);
+    if (!dateKey) return;
+    const tbody = document.querySelector(".pos-sales-table tbody");
+    if (!tbody) return;
+    const rows = Array.from(tbody.querySelectorAll("tr[data-pos-date]"));
+    if (!rows.length) return;
+    const viewType = state.posViewType || "category";
+    const series = String(seriesName || "");
+    let target = null;
+    if (viewType === "product" && series) {
+      target = rows.find(
+        (tr) => tr.getAttribute("data-pos-date") === dateKey && tr.getAttribute("data-pos-name") === series
+      );
+    } else if (series) {
+      target = rows.find(
+        (tr) => tr.getAttribute("data-pos-date") === dateKey && tr.getAttribute("data-pos-cat") === series
+      );
+    }
+    if (!target) {
+      target = rows.find((tr) => tr.getAttribute("data-pos-date") === dateKey);
+    }
+    if (!target) return;
+
+    tbody.querySelectorAll("tr.is-pos-flash").forEach((tr) => tr.classList.remove("is-pos-flash"));
+    target.classList.add("is-pos-flash");
+    try {
+      target.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    } catch (eScroll) {
+      target.scrollIntoView(true);
+    }
+    window.clearTimeout(scrollPosTableTo_._timer);
+    scrollPosTableTo_._timer = window.setTimeout(() => {
+      target.classList.remove("is-pos-flash");
+    }, 2800);
+  }
+
+  function weatherByDate_(list) {
+    const map = {};
+    (list || []).forEach((w) => {
+      const d = String(w.date || w.일자 || "").slice(0, 10);
+      if (d) map[d] = w;
+    });
+    return map;
+  }
+
+  function weatherIcon_(label) {
+    const s = String(label || "");
+    if (/맑/.test(s)) return "\u2600\uFE0F";
+    if (/비/.test(s)) return "\uD83C\uDF27\uFE0F";
+    if (/눈/.test(s)) return "\u2744\uFE0F";
+    if (/구름/.test(s)) return "\u26C5";
+    if (/흐림/.test(s)) return "\u2601\uFE0F";
+    return s ? s : "-";
+  }
+
+  function weatherTickLines_(isoDate, timeFilter, wxMap) {
+    const md = isoDate.length >= 10 ? isoDate.slice(5, 7) + "/" + isoDate.slice(8, 10) : isoDate;
+    const w = wxMap[isoDate];
+    if (!w) return [md, "-"];
+    const tf = timeFilter || "all";
+    let label = "";
+    let temp = null;
+    if (tf === "lunch") {
+      label = w.amWeather || w.오전_날씨 || "";
+      temp = w.amTemp != null ? w.amTemp : w.오전_기온;
+    } else if (tf === "dinner") {
+      label = w.pmWeather || w.오후_날씨 || "";
+      temp = w.pmTemp != null ? w.pmTemp : w.오후_기온;
+    } else {
+      label = w.pmWeather || w.오후_날씨 || w.amWeather || w.오전_날씨 || "";
+      temp = w.pmTemp != null ? w.pmTemp : w.오후_기온 != null ? w.오후_기온 : w.amTemp != null ? w.amTemp : w.오전_기온;
+    }
+    const t =
+      temp != null && temp !== "" && Number.isFinite(Number(temp))
+        ? Math.round(Number(temp)) + "℃"
+        : "";
+    const icon = weatherIcon_(label);
+    const second = t ? icon + " " + t : icon;
+    return [md, second];
+  }
+
+  function destroyTrendChart_() {
+    if (posTrendChart_ && typeof posTrendChart_.destroy === "function") {
+      try {
+        posTrendChart_.destroy();
+      } catch (e0) {}
+    }
+    posTrendChart_ = null;
+  }
+
+  function buildSeries_(filtered, viewType) {
+    const datesSet = {};
+    filtered.forEach((r) => {
+      const d = rowDate_(r);
+      if (d) datesSet[d] = true;
+    });
+    const labels = Object.keys(datesSet).sort();
+    const seriesNames = [];
+    const byKeyDate = {};
+
+    if (viewType === "product") {
+      const byName = {};
+      filtered.forEach((r) => {
+        const nm = rowName_(r);
+        byName[nm] = (byName[nm] || 0) + qtyNum_(r.qty != null ? r.qty : r.수량);
+      });
+      const top5 = Object.keys(byName)
+        .map((name) => ({ name: name, qty: byName[name] }))
+        .sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name, "ko"))
+        .slice(0, 5);
+      top5.forEach((t) => seriesNames.push(t.name));
+      filtered.forEach((r) => {
+        const nm = rowName_(r);
+        if (seriesNames.indexOf(nm) < 0) return;
+        const d = rowDate_(r);
+        if (!d) return;
+        const key = nm + "\t" + d;
+        byKeyDate[key] = (byKeyDate[key] || 0) + qtyNum_(r.qty != null ? r.qty : r.수량);
+      });
+    } else {
+      CAT_ORDER.forEach((c) => seriesNames.push(c));
+      filtered.forEach((r) => {
+        const cat = categorizePosName_(rowName_(r));
+        const d = rowDate_(r);
+        if (!d) return;
+        const key = cat + "\t" + d;
+        byKeyDate[key] = (byKeyDate[key] || 0) + qtyNum_(r.qty != null ? r.qty : r.수량);
+      });
+    }
+
+    const datasets = seriesNames.map((name, idx) => {
+      const data = labels.map((d) => byKeyDate[name + "\t" + d] || 0);
+      const color =
+        viewType === "category" ? CAT_COLORS[name] || LINE_PALETTE[idx % LINE_PALETTE.length] : LINE_PALETTE[idx % LINE_PALETTE.length];
+      return {
+        label: name,
+        data: data,
+        borderColor: color,
+        backgroundColor: color,
+        tension: 0.25,
+        fill: false,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+        borderWidth: 2,
+      };
+    });
+
+    return { labels: labels, datasets: datasets, seriesNames: seriesNames };
+  }
+
+  function buildTrendAiInsight_(filtered, viewType, timeFilter) {
+    const tfLabel =
+      timeFilter === "lunch" ? "점심 시간대" : timeFilter === "dinner" ? "저녁 시간대" : "조회 기간";
+    if (!filtered.length) {
+      return tfLabel + "에 표시할 판매 데이터가 없습니다. 기간·필터를 바꿔 보세요.";
+    }
+    let total = 0;
+    const bucket = {};
+    filtered.forEach((r) => {
+      const q = qtyNum_(r.qty != null ? r.qty : r.수량);
+      total += q;
+      const key = viewType === "product" ? rowName_(r) : categorizePosName_(rowName_(r));
+      bucket[key] = (bucket[key] || 0) + q;
+    });
+    const ranked = Object.keys(bucket)
+      .map((k) => ({ name: k, qty: bucket[k] }))
+      .sort((a, b) => b.qty - a.qty);
+    if (!ranked.length || total <= 0) {
+      return tfLabel + " 판매 집계가 비어 있습니다.";
+    }
+    const top = ranked[0];
+    const pct = Math.round((top.qty / total) * 100);
+    if (viewType === "product") {
+      return (
+        tfLabel +
+        "에는 '" +
+        top.name +
+        "' 판매가 전체의 " +
+        pct +
+        "%(" +
+        top.qty.toLocaleString("ko-KR") +
+        "개)로 가장 높습니다. 재고·발주를 점검하세요."
+      );
+    }
+    return (
+      tfLabel +
+      "에는 '" +
+      top.name +
+      "' 판매가 전체의 " +
+      pct +
+      "%를 차지하며 강세입니다."
+    );
+  }
+
+  function paintTrendChart_() {
+    const canvas = document.getElementById("posTrendChart");
+    const insightEl = document.getElementById("aiInsightText");
+    const viewEl = document.getElementById("viewType");
+    const timeEl = document.getElementById("timeFilter");
+    if (viewEl) state.posViewType = viewEl.value || "category";
+    if (timeEl) state.posTimeFilter = timeEl.value || "all";
+
+    if (state.posLoading) {
+      if (insightEl) insightEl.textContent = "AI 인사이트: (로딩중...)";
+      destroyTrendChart_();
+      return;
+    }
+
+    const filtered = filterByTime_(state.posRows || [], state.posTimeFilter);
+    const series = buildSeries_(filtered, state.posViewType);
+    const insight = buildTrendAiInsight_(filtered, state.posViewType, state.posTimeFilter);
+    if (insightEl) insightEl.textContent = insight;
+
+    if (!canvas) return;
+    destroyTrendChart_();
+    if (typeof Chart === "undefined") {
+      const wrap = canvas.parentElement;
+      if (wrap && !wrap.querySelector("[data-pos-chart-fallback]")) {
+        const p = document.createElement("p");
+        p.setAttribute("data-pos-chart-fallback", "1");
+        p.className = "text-[12px] text-black/45 text-center py-8";
+        p.textContent = "Chart.js 를 불러오지 못했습니다.";
+        wrap.appendChild(p);
+      }
+      return;
+    }
+
+    const wxMap = weatherByDate_(state.posWeather || []);
+    const timeFilter = state.posTimeFilter;
+    posTrendChart_ = new Chart(canvas, {
+      type: "line",
+      data: {
+        labels: series.labels,
+        datasets: series.datasets,
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "nearest", intersect: true },
+        onHover: function (evt, elements) {
+          const el = evt && evt.native && evt.native.target;
+          if (el) el.style.cursor = elements && elements.length ? "pointer" : "default";
+        },
+        onClick: function (evt, elements, chart) {
+          const ch = chart || posTrendChart_;
+          if (!ch) return;
+          let hits = elements;
+          if (!hits || !hits.length) {
+            try {
+              hits = ch.getElementsAtEventForMode(evt, "nearest", { intersect: false }, true);
+            } catch (eHit) {
+              hits = [];
+            }
+          }
+          if (!hits || !hits.length) return;
+          const hit = hits[0];
+          const dateIso = ch.data.labels[hit.index];
+          const ds = ch.data.datasets[hit.datasetIndex];
+          const seriesName = ds && ds.label ? ds.label : "";
+          scrollPosTableTo_(dateIso, seriesName);
+        },
+        plugins: {
+          legend: {
+            position: "bottom",
+            labels: { boxWidth: 12, font: { size: 11 } },
+          },
+          tooltip: {
+            callbacks: {
+              title: function (items) {
+                if (!items || !items.length) return "";
+                const iso = String(items[0].label || "");
+                const lines = weatherTickLines_(iso, timeFilter, wxMap);
+                return iso + " · " + lines[1];
+              },
+              afterBody: function () {
+                return ["클릭하면 아래 표에서 해당 일자로 이동합니다."];
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            ticks: {
+              maxRotation: 0,
+              minRotation: 0,
+              autoSkip: true,
+              maxTicksLimit: 12,
+              font: { size: 10 },
+              callback: function (value) {
+                const iso = this.getLabelForValue(value);
+                return weatherTickLines_(String(iso), timeFilter, wxMap);
+              },
+            },
+            grid: { display: false },
+          },
+          y: {
+            beginAtZero: true,
+            ticks: {
+              precision: 0,
+              font: { size: 10 },
+            },
+            title: { display: true, text: "수량", font: { size: 11 } },
+          },
+        },
+      },
+    });
+  }
+
+  function normalizePosRows_(posData) {
+    return (posData || [])
+      .map((r) => ({
+        date: r.saleDate || r.date || r.판매일자 || "",
+        soldAt: r.soldAt || r.판매시간 || r.판매일시 || "",
+        hour: r.hour != null ? r.hour : null,
+        name: r.name || r.상품명 || "",
+        qty: r.qty != null ? r.qty : r.수량,
+        unitPrice: r.unitPrice != null ? r.unitPrice : r.단가,
+      }))
+      .filter((r) => r.date || r.soldAt || r.name);
+  }
+
+  async function load() {
+    ensureState_();
+    state.posLoading = true;
+    state.posError = "";
+    render();
+    try {
+      const data = await api("jobGetPosDashboardData", {
+        startDate: state.posStart,
+        endDate: state.posEnd,
+        days: 30,
+        keyword: state.posKeyword || "",
+      });
+      state.posRows = normalizePosRows_(data.posData || data.rows || []);
+      state.posWeather = data.weatherData || [];
+      if (data.version) state.apiVersion = data.version;
+      if (data.message && !(state.posRows && state.posRows.length)) {
+        state.posError = data.message;
+      }
+    } catch (err) {
+      state.posError = err.message || "불러오지 못했습니다.";
+      state.posRows = [];
+      state.posWeather = [];
+    } finally {
+      state.posLoading = false;
+      render();
+    }
+  }
+
+  function applySearch_() {
+    const startEl = document.getElementById("posStartDate");
+    const endEl = document.getElementById("posEndDate");
+    const kwEl = document.getElementById("posKeyword");
+    if (startEl) state.posStart = startEl.value || state.posStart;
+    if (endEl) state.posEnd = endEl.value || state.posEnd;
+    if (kwEl) {
+      state.posSearchText = kwEl.value || "";
+      state.posKeyword = state.posSearchText.trim();
+    }
+    load();
+  }
+
+  function dashboardHtml_() {
+    const viewType = state.posViewType || "category";
+    const timeFilter = state.posTimeFilter || "all";
+    return `
+      <div class="rounded-2xl border border-paper-line bg-white shadow-panel p-3 shrink-0 space-y-3">
+        <div class="flex flex-wrap items-end gap-2">
+          <label class="text-[11px] text-black/55">
+            <span class="block mb-1 font-semibold">조회 기준</span>
+            <select id="viewType" class="compact-control rounded-lg border border-paper-line bg-white px-2 text-xs min-w-[140px]">
+              <option value="category"${viewType === "category" ? " selected" : ""}>카테고리별</option>
+              <option value="product"${viewType === "product" ? " selected" : ""}>상품별 상위 5개</option>
+            </select>
+          </label>
+          <label class="text-[11px] text-black/55">
+            <span class="block mb-1 font-semibold">시간대 필터</span>
+            <select id="timeFilter" class="compact-control rounded-lg border border-paper-line bg-white px-2 text-xs min-w-[160px]">
+              <option value="all"${timeFilter === "all" ? " selected" : ""}>전체</option>
+              <option value="lunch"${timeFilter === "lunch" ? " selected" : ""}>점심(오픈~15:00)</option>
+              <option value="dinner"${timeFilter === "dinner" ? " selected" : ""}>저녁(15:01~마감)</option>
+            </select>
+          </label>
+          <p class="text-[11px] text-black/40 self-center">X축 날짜 아래는 일별날씨(기온)입니다.</p>
+        </div>
+        <div class="relative w-full h-56 lg:h-72">
+          <canvas id="posTrendChart" class="w-full h-56 lg:h-72" aria-label="POS 판매 추이 꺾은선"></canvas>
+        </div>
+        <div id="aiInsightText" class="p-3 bg-blue-50 text-blue-800 rounded font-semibold mt-2 text-[13px] leading-relaxed">
+          AI 인사이트: (로딩중...)
+        </div>
+      </div>`;
+  }
+
+  function html() {
+    ensureState_();
+    const rows = filterByTime_(state.posRows || [], state.posTimeFilter || "all");
+    const kw = (state.posKeyword || "").toLowerCase();
+    const tableRows = kw
+      ? rows.filter((r) => String(r.name || "").toLowerCase().indexOf(kw) >= 0)
+      : rows;
+    const body = state.posLoading
+      ? `<div class="p-6 text-sm text-black/50">불러오는 중…</div>`
+      : !tableRows.length
+        ? `<div class="p-6 text-sm text-black/50">조건에 맞는 판매내역이 없습니다.</div>`
+        : `
+      <div id="posTableScroll" data-scroll-keep="posTableScroll" class="lg:h-full lg:min-h-0 overflow-auto scroll-thin rounded-xl border border-paper-line bg-white shadow-panel">
+        <table class="app-table pos-sales-table w-full text-sm">
+          <thead id="tableHeader" class="bg-[#f3f6f3] text-black/55">
+            <tr>
+              <th class="pos-col-date font-medium sticky top-0 z-10 bg-[#f3f6f3] shadow-sm">판매일자</th>
+              <th class="pos-col-when font-medium sticky top-0 z-10 bg-[#f3f6f3] shadow-sm">판매시간</th>
+              <th class="pos-col-name font-medium sticky top-0 z-10 bg-[#f3f6f3] shadow-sm">상품명</th>
+              <th class="pos-col-qty font-medium sticky top-0 z-10 bg-[#f3f6f3] shadow-sm">수량</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tableRows.map((r) => {
+              const dIso = rowDate_(r);
+              const nm = rowName_(r);
+              const cat = categorizePosName_(nm);
+              return `
+              <tr class="border-t border-paper-line" data-pos-date="${esc(dIso)}" data-pos-name="${esc(nm)}" data-pos-cat="${esc(cat)}">
+                <td class="pos-col-date whitespace-nowrap tabular-nums">${esc(formatSaleDateShort_(dIso))}</td>
+                <td class="pos-col-when whitespace-nowrap tabular-nums">${esc(formatSoldAtShort_(r.soldAt || ""))}</td>
+                <td class="pos-col-name truncate" title="${esc(nm)}">${esc(nm)}</td>
+                <td class="pos-col-qty num tabular-nums">${esc(qtyText_(r.qty))}</td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>`;
+
+    return `
+      <section class="flex-1 min-w-0 min-h-0 flex flex-col p-3 lg:p-6 overflow-hidden">
+        <div class="mb-3 space-y-2 shrink-0">
+          ${typeof screenTitleRowHtml_ === "function"
+            ? screenTitleRowHtml_({
+                title: "POS 판매내역",
+                selectId: "posMonthSelect",
+                rightHtml: `${tableRows.length.toLocaleString("ko-KR")}건
+              <div class="text-[11px] text-black/40">화면 ${UI_VERSION}${state.apiVersion ? (" · 서버 " + esc(state.apiVersion)) : ""}</div>`
+              })
+            : `<div class="flex items-center gap-3"><h2 class="text-xl font-bold tracking-tight">POS 판매내역</h2>${typeof monthSelectHtml_ === "function" ? monthSelectHtml_("posMonthSelect") : ""}</div>`}
+          <div class="flex flex-wrap items-center gap-1.5">
+            <input type="date" id="posStartDate" value="${esc(state.posStart)}"
+              class="compact-control rounded-lg border border-paper-line bg-white px-2 text-xs" title="시작일자" />
+            <span class="text-[11px] text-black/40">~</span>
+            <input type="date" id="posEndDate" value="${esc(state.posEnd)}"
+              class="compact-control rounded-lg border border-paper-line bg-white px-2 text-xs" title="종료일자" />
+            <input id="posKeyword" value="${esc(state.posSearchText || "")}" placeholder="상품명 검색"
+              class="compact-control flex-1 min-w-[140px] rounded-lg border border-paper-line bg-white px-2 text-xs" />
+            <button type="button" id="btnPosSearch" class="compact-control rounded-lg bg-brand text-white px-3 text-xs font-bold">검색</button>
+            <button type="button" id="btnPosRefresh" class="compact-control rounded-lg border border-paper-line bg-white px-2 text-xs" title="새로고침">
+              <i class="fa-solid fa-rotate-right"></i>
+            </button>
+          </div>
+          <p class="text-[11px] text-black/45">기준월 선택 시 해당월 1일~말일 · 일자는 직접 수정 가능 · 점심≤15:00 / 저녁&gt;15:00</p>
+          ${state.posError ? `<div class="text-sm text-red-700">${esc(state.posError)}</div>` : ""}
+        </div>
+        <div id="posScrollArea" data-scroll-keep="posScrollArea" class="flex-1 min-h-0 overflow-y-auto scroll-thin pb-24 lg:pb-0 lg:flex lg:flex-col lg:overflow-hidden space-y-3 lg:space-y-4">
+          ${dashboardHtml_()}
+          <div class="lg:flex-1 lg:min-h-0 lg:overflow-hidden">${body}</div>
+        </div>
+      </section>`;
+  }
+
+  function refilterWithoutReload_() {
+    const viewEl = document.getElementById("viewType");
+    const timeEl = document.getElementById("timeFilter");
+    if (viewEl) state.posViewType = viewEl.value || "category";
+    if (timeEl) state.posTimeFilter = timeEl.value || "all";
+    render();
+  }
+
+  function bind() {
+    document.getElementById("btnPosSearch")?.addEventListener("click", () => applySearch_());
+    document.getElementById("btnPosRefresh")?.addEventListener("click", () => applySearch_());
+    document.getElementById("viewType")?.addEventListener("change", () => refilterWithoutReload_());
+    document.getElementById("timeFilter")?.addEventListener("change", () => refilterWithoutReload_());
+    const kw = document.getElementById("posKeyword");
+    if (kw) {
+      kw.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          applySearch_();
+        }
+      });
+    }
+    requestAnimationFrame(() => paintTrendChart_());
+  }
+
+  global.PosSales = {
+    html: html,
+    load: load,
+    bind: bind,
+    ensureState: ensureState_,
+    defaultRange: defaultRange_,
+    categorize: categorizePosName_,
+  };
+})(window);
+</script>

@@ -2,7 +2,7 @@
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 datas = collect_data_files('certifi')
-hiddenimports = ['xlrd', 'okpos_crawler']
+hiddenimports = ['xlrd', 'okpos_crawler', 'weather_sync', 'requests', 'urllib3', 'certifi']
 hiddenimports += collect_submodules('selenium')
 hiddenimports += collect_submodules('webdriver_manager')
 hiddenimports += collect_submodules('google.auth')
@@ -11,9 +11,12 @@ hiddenimports += collect_submodules('gspread')
 
 a = Analysis(
     ['store_agent.py'],
-    pathex=['..'],
+    pathex=['..', '.'],
     binaries=[],
-    datas=datas + [('config.example.json', '.')],
+    datas=datas + [
+        ('config.example.json', '.'),
+        ('weather_sync.py', '.'),
+    ],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

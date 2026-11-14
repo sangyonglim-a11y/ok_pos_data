@@ -4,8 +4,9 @@
   "sheet_url": "https://docs.google.com/spreadsheets/d/시트ID/edit",
   "service_account_file": "okpos-inventory.json",
   "gemini_api_key": "Gemini키(선택, OCR용)",
+  "weather_api_key": "공공데이터포털_ASOS_Decoding키",
   "business_hours": {
-    "start": "10:00",
+    "start": "11:00",
     "end": "23:00",
     "days": [0, 1, 2, 3, 4, 5, 6]
   },

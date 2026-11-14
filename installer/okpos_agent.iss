@@ -2,7 +2,7 @@
 ; 빌드: installer\build_agent.ps1
 
 #define MyAppName "중계고기파티 OKPOS 수집"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.1"
 #define MyAppPublisher "중계고기파티"
 #define MyAppExeName "okpos_agent.exe"
 

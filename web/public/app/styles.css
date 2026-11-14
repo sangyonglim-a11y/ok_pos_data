@@ -25,6 +25,171 @@ body {
   min-width: 44px;
 }
 
+/* 공통: 모든 데이터 테이블 헤더 틀고정 + 정렬 */
+.app-table,
+.stock-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+/* 모든 표 컬럼 제목 틀고정 (기본) */
+.app-table thead,
+.inspect-table thead,
+.unreg-table thead,
+.pos-sales-table thead,
+.balance-table thead,
+.stock-table thead,
+.stock-thead {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+.app-table thead th,
+.app-table thead#tableHeader th,
+.inspect-table thead th,
+.unreg-table thead th,
+.pos-sales-table thead th,
+.balance-table thead th,
+.stock-table thead th,
+.stock-thead th {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: #f3f6f3;
+  box-shadow: 0 1px 0 #e4ddd2;
+  text-align: center !important;
+}
+.stock-table td,
+.stock-table th {
+  vertical-align: middle;
+}
+.stock-table input[type="number"]::-webkit-outer-spin-button,
+.stock-table input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.stock-table input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.order-dual-table td,
+.order-dual-table th {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+.order-dual-table thead th {
+  font-size: 10px;
+}
+/* 발주 화면 체크박스: 글자 높이(1em)에 맞춤 */
+.order-check {
+  width: 1em;
+  height: 1em;
+  margin: 0;
+  vertical-align: middle;
+  flex-shrink: 0;
+  accent-color: #1f7a4c;
+}
+.order-vendor-head {
+  box-shadow: 0 1px 0 #e4ddd2;
+}
+.inspect-table thead th {
+  z-index: 30;
+  white-space: nowrap;
+}
+.app-table .receipt-icon-btn {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+  border-radius: 6px;
+}
+.inspect-table .inspect-cell-input {
+  min-height: 24px !important;
+  height: 24px !important;
+  padding: 0 4px !important;
+  font-size: 11px !important;
+  line-height: 24px !important;
+}
+.inspect-table .inspect-save-btn {
+  min-height: 0 !important;
+  min-width: 0 !important;
+  height: 22px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 22px;
+  border-radius: 4px;
+}
+
+/* 공통 테이블: 헤더·문자 중앙, 숫자 우측(+콤마는 JS toLocaleString) */
+.app-table th,
+.inspect-table th,
+.unreg-table th,
+.pos-sales-table th {
+  text-align: center !important;
+}
+.app-table td,
+.inspect-table td,
+.pos-sales-table td {
+  text-align: center;
+}
+.app-table td.num,
+.app-table th.num,
+.pos-sales-table td.num {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+}
+.pos-sales-table {
+  table-layout: fixed;
+}
+.pos-sales-table .pos-col-date {
+  width: 4.25rem;
+  white-space: nowrap;
+  padding: 6px 8px;
+}
+.pos-sales-table .pos-col-when {
+  width: 3.5rem;
+  white-space: nowrap;
+  padding: 6px 8px;
+}
+.pos-sales-table .pos-col-name {
+  max-width: 0;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 6px 8px;
+  text-align: left !important;
+}
+.pos-sales-table .pos-col-qty {
+  width: 3.25rem;
+  white-space: nowrap;
+  padding: 6px 8px;
+}
+.pos-sales-table tr.is-pos-flash td {
+  background: #e8f3ec !important;
+  box-shadow: inset 0 0 0 1px rgba(22, 48, 40, 0.25);
+  transition: background 0.2s ease;
+}
+
+.price-chart-wrap {
+  position: relative;
+}
+.price-chart-tip {
+  position: absolute;
+  z-index: 20;
+  pointer-events: none;
+  transform: translate(-50%, -120%);
+  background: #163028;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.35;
+  padding: 6px 8px;
+  border-radius: 8px;
+  white-space: nowrap;
+  box-shadow: 0 6px 16px rgba(22, 48, 40, 0.25);
+}
+.price-chart-tip.is-hidden {
+  display: none;
+}
+
 /* 필터 콤보/검색은 작게 */
 .compact-control {
   min-height: 34px !important;
@@ -47,18 +212,26 @@ body {
 .badge-ok { background: #e7f6ee; color: #1f7a4c; }
 .badge-wait { background: #fff1e0; color: #c46a1b; }
 
-/* 모바일: 한 화면에 많이 보이도록 촘촘한 행 */
+/* 모바일: 전표 그룹 + 2단 초압축 카드 */
 .dense-list {
   background: #fff;
   border-top: 1px solid #e4ddd2;
 }
+.slip-group + .slip-group {
+  border-top: 2px solid #ddd5c8;
+}
+.slip-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
 .dense-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: 6px;
+  padding: 4px 6px;
   border-bottom: 1px solid #eee7dc;
-  min-height: 56px;
+  min-height: 32px;
   background: #fff;
 }
 .dense-row.is-dirty {
@@ -66,11 +239,81 @@ body {
   box-shadow: inset 3px 0 0 #e2a93a;
 }
 .dense-row.is-checked:not(.is-dirty) { background: #f4faf6; }
+.dense-row.is-open {
+  box-shadow: inset 0 0 0 1px rgba(31, 122, 76, 0.35);
+}
 .dense-check {
-  width: 22px;
-  height: 22px;
+  width: 16px;
+  height: 16px;
   accent-color: #1f7a4c;
   flex: 0 0 auto;
+}
+.m-card-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 4px 8px;
+  align-items: center;
+  text-align: left;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.m-card-name {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #163028;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-card-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0;
+  min-width: 0;
+  line-height: 1.15;
+}
+.m-card-spec {
+  font-size: 9px;
+  color: rgba(0, 0, 0, 0.45);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-card-qty {
+  font-size: 10px;
+  color: rgba(0, 0, 0, 0.65);
+}
+.m-card-amt {
+  font-size: 11px;
+  font-weight: 700;
+  color: #163028;
+}
+.inspect-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: 0;
+  padding: 0;
+  font-size: 12px;
+  cursor: pointer;
+  color: #fff;
+}
+.inspect-icon-btn.is-save { background: #1f7a4c; }
+.inspect-icon-btn.is-del { background: #ef4444; }
+.inspect-icon-btn:disabled,
+.inspect-icon-btn.opacity-40 {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .chip-saved, .chip-now, .chip-pending {
   display: inline-flex;
@@ -98,8 +341,315 @@ body {
     );
 }
 
+/* 공통 명세서 뷰어: 휠 줌 + transform 팬 (overflow 밖으로 안 삐져나감) */
+.receipt-frame.panel-zoom-frame,
+.receipt-frame.image-viewer,
+.image-viewer.panel-zoom-frame {
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  position: relative;
+}
+.receipt-frame.panel-zoom-frame.is-panning,
+.image-viewer.is-panning {
+  cursor: grabbing;
+}
+.receipt-frame .panel-zoom-img,
+.receipt-frame .image-viewer-img,
+.image-viewer .panel-zoom-img,
+.image-viewer .image-viewer-img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  max-height: 100%;
+  margin: 0 auto;
+  object-fit: contain;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-drag: none;
+  -webkit-user-select: none;
+  transform-origin: center center;
+  transition: transform 0.1s ease-out;
+  will-change: transform;
+}
+.receipt-frame .panel-zoom-img.is-dragging,
+.receipt-frame .image-viewer-img.is-dragging,
+.image-viewer.is-panning .panel-zoom-img,
+.image-viewer.is-panning .image-viewer-img,
+.receipt-frame.panel-zoom-frame.is-panning .panel-zoom-img {
+  cursor: grabbing;
+  transition: none;
+}
+
+.receipt-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid #e4ddd2;
+  background: #fff;
+  color: #163028;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+}
+.receipt-icon-btn:active {
+  transform: scale(0.96);
+  background: #eef6f1;
+}
+
+/* 금액 검증: 행 선택 + 우측 영수증 */
+.balance-row.is-selected,
+.balance-card.is-selected {
+  background: #eef6f1 !important;
+  box-shadow: inset 3px 0 0 #1f7a4c;
+}
+.balance-row:hover {
+  background: #f7faf7;
+}
+.balance-table thead th {
+  text-align: center !important;
+}
+.balance-receipt-panel {
+  display: none;
+}
+@media (min-width: 1024px) {
+  .balance-receipt-panel {
+    display: flex;
+  }
+}
+
+/* 미등록 품목: 1줄 가로(엑셀형) + 우측 영수증 패널 */
+.unreg-card {
+  background: #fff;
+  transition: background .12s ease;
+}
+.unreg-card:hover {
+  background: #f7faf7;
+}
+.unreg-card.is-selected {
+  background: #eef6f1;
+  box-shadow: inset 3px 0 0 #1f7a4c;
+}
+.unreg-card.is-locked {
+  opacity: 1;
+}
+/* 체크(편집 대상) 행: 더 진한 배경 */
+.unreg-card.is-editing {
+  background: #cfe5d8;
+  box-shadow: inset 3px 0 0 #1f7a4c;
+}
+.unreg-card.is-editing.is-selected {
+  background: #bdddc9;
+}
+/* 잠금(체크 전): disabled여도 글자 또렷 (등록구분 색상 select는 제외) */
+.unreg-card .unreg-input:disabled,
+.unreg-card input.unreg-input[readonly] {
+  opacity: 1 !important;
+  cursor: default;
+}
+.unreg-card input.unreg-input-locked,
+.unreg-card input.unreg-input:disabled,
+.unreg-card input.unreg-input[readonly]:not(.unreg-code-alias) {
+  color: #1a1a1a !important;
+  -webkit-text-fill-color: #1a1a1a;
+  background-color: #f3f5f3;
+}
+.unreg-card select.unreg-input-locked,
+.unreg-card select.unreg-input:disabled {
+  opacity: 1 !important;
+  filter: none;
+}
+.unreg-card .unreg-code-alias {
+  color: #1d4f91 !important;
+  -webkit-text-fill-color: #1d4f91;
+  background-color: #e8f1fb !important;
+  font-weight: 600;
+}
+.unreg-parent-pick {
+  animation: unregParentIn .18s ease;
+  z-index: 5;
+}
+@keyframes unregParentIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* 부모대표코드 목록: 1행 · 코드 숨김 · 아래쪽 입력 시 위로 열림 */
+.unreg-parent-dropdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 2px);
+  bottom: auto;
+  z-index: 40;
+  max-height: 30rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  background: #111827;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+}
+.unreg-parent-dropdown.is-above {
+  top: auto;
+  bottom: calc(100% + 2px);
+  box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.28);
+}
+.unreg-parent-dropdown.hidden {
+  display: none !important;
+}
+.unreg-parent-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.55rem 0.7rem;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  color: #f9fafb;
+  font-size: 12px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.unreg-parent-option:hover,
+.unreg-parent-option:focus {
+  background: #1f7a4c;
+  outline: none;
+}
+.unreg-parent-option-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.unreg-parent-empty {
+  padding: 0.75rem;
+  color: #9ca3af;
+  font-size: 12px;
+}
+.unreg-row {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.unreg-thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #f3f4f6; /* gray-100 — 세로 스크롤 시 본문 비침 방지 */
+}
+.unreg-list {
+  width: 100%;
+  min-width: 0;
+}
+.unreg-input {
+  min-height: 32px !important;
+  height: 32px !important;
+  line-height: 32px !important;
+  font-size: 11px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+.unreg-receipt-panel {
+  display: none;
+}
+@media (min-width: 1024px) {
+  .unreg-receipt-panel {
+    display: flex;
+  }
+}
+.unreg-del-btn,
+.unreg-exclude-btn {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid #e8cfc7;
+  background: #fdf3ef;
+  color: #9a3412;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.unreg-del-btn:disabled,
+.unreg-exclude-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 @media (max-width: 1023px) {
   .desktop-only { display: none !important; }
+  .mobile-filters-collapsed { display: none !important; }
+  .m-slip-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+  }
+  /* 모바일 가독성: 컨트롤·카드 글자/터치 영역 상향 */
+  .compact-control {
+    min-height: 40px !important;
+    height: 40px;
+    font-size: 14px !important;
+    line-height: 40px;
+  }
+  .m-card-edit .compact-control {
+    min-height: 36px !important;
+    height: 36px !important;
+    line-height: 36px !important;
+    font-size: 13px !important;
+  }
+  .dense-row {
+    padding: 8px 10px;
+    min-height: 44px;
+    gap: 8px;
+  }
+  .m-card-name { font-size: 14px; }
+  .m-card-spec { font-size: 11px; }
+  .m-card-qty { font-size: 12px; }
+  .m-card-amt { font-size: 13px; }
+  .dense-check {
+    width: 18px;
+    height: 18px;
+  }
+  .receipt-icon-btn,
+  .inspect-icon-btn {
+    width: 32px;
+    height: 32px;
+    font-size: 13px;
+  }
+  .balance-card .compact-control {
+    min-height: 40px !important;
+    height: 40px;
+    font-size: 15px !important;
+  }
+  /* POS 표: 모바일 한 줄(일자·시간·상품명·수량) */
+  .pos-sales-table {
+    table-layout: fixed;
+    font-size: 13px;
+  }
+  .pos-sales-table .pos-col-date {
+    width: 3.5rem;
+    padding: 5px 4px;
+    font-size: 12px;
+  }
+  .pos-sales-table .pos-col-when {
+    width: 2.75rem;
+    padding: 5px 4px;
+    font-size: 12px;
+  }
+  .pos-sales-table .pos-col-name {
+    padding: 5px 6px;
+    font-size: 13px;
+  }
+  .pos-sales-table .pos-col-qty {
+    width: 2.75rem;
+    padding: 5px 6px;
+    font-size: 13px;
+  }
 }
 @media (min-width: 1024px) {
   .mobile-only { display: none !important; }

@@ -1,0 +1,9 @@
+# Google Apps Script (GAS) + Tailwind CSS 프로젝트 철칙
+
+1. **절대 보존 영역:** `Index.html`의 `<head>` 영역에 있는 Tailwind CSS CDN 링크(`<script src="https://cdn.tailwindcss.com"></script>`)는 어떠한 경우에도 삭제하거나 수정하지 마라.
+2. **GAS 템플릿 문법 준수:** 다른 HTML/JS 파일을 불러올 때는 반드시 구글 Apps Script 고유 문법인 `<?!= include('파일명'); ?>`을 유지하라. 절대 일반적인 `<link>`나 `<script src="...">` 태그로 마음대로 바꾸지 마라.
+3. **수정 범위 엄격 제한:** 특정 컴포넌트나 화면(예: `unregHtml`, `AppJs`)의 수정을 요청받으면 해당 파일만 수정해라. 사용자의 명시적인 지시가 없는 한 메인 뼈대인 `Index.html`은 절대 건드리지 마라.
+4. **태그 닫기 철저:** HTML을 수정할 때 `</div>` 등 닫는 태그가 누락되어 전체 레이아웃이 깨지는 일이 없도록 DOM 구조를 엄격히 검증하라.
+5. **개발 안내 문구 금지:** 정렬·단수·Enter 저장 등 개발자용 설명은 화면에 넣지 마라. 사용자 안내가 꼭 필요하면 구현 전 컨펌을 받아라.
+6. **컬럼 제목 틀고정:** 표 화면은 thead/th sticky(틀고정)를 기본으로 적용하고, sticky가 깨지는 중첩 overflow를 피하라.
+7. **저장 후 자리 유지:** 수정·저장 후 render/reload 해도 스크롤·포커스가 그 자리로 돌아가게 하라. 새 스크롤 영역은 id+data-scroll-keep 및 SCROLL_RESTORE_IDS_ 등록, 저장 시 markFocusRestore_ 사용.
